@@ -58,11 +58,7 @@ def home():
 def test_route():
     return api_test_controller.test_api()
 
-app.add_url_rule(
-    "/batch",
-    view_func=apk_controller.batch,
-    methods=["POST"]
-)
+app.add_url_rule("/batch", view_func=apk_controller.batch,  methods=["POST"])
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080, debug=True)
