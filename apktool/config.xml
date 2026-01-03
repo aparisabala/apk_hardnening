@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<APKEasyTool xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <SelectedPathMain>C:\Users\Paris Ariyan\Desktop\Tuit_oFKsHIUn (1).apk</SelectedPathMain>
+  <SelectedDexOdexOat />
+  <SelectedSmali />
+  <PathDec>C:\Users\Paris Ariyan\Desktop\APK Easy Tool v1.60 Portable\1-Decompiled APKs</PathDec>
+  <PathCom>C:\Users\Paris Ariyan\Desktop\APK Easy Tool v1.60 Portable\2-Recompiled APKs</PathCom>
+  <PathExt>C:\Users\Paris Ariyan\Desktop\APK Easy Tool v1.60 Portable\3-Extracted APKs</PathExt>
+  <PathZip>C:\Users\Paris Ariyan\Desktop\APK Easy Tool v1.60 Portable\4-Zipped APKs</PathZip>
+  <PathBaksmali>C:\Users\Paris Ariyan\Desktop\APK Easy Tool v1.60 Portable\5-Baksmali</PathBaksmali>
+  <PathSmali>C:\Users\Paris Ariyan\Desktop\APK Easy Tool v1.60 Portable\6-Smali</PathSmali>
+  <PathPem>C:\Users\Paris Ariyan\Desktop\APK Easy Tool v1.60 Portable\Resources\apkeasytool.pem</PathPem>
+  <PathPk8>C:\Users\Paris Ariyan\Desktop\APK Easy Tool v1.60 Portable\Resources\apkeasytool.pk8</PathPk8>
+  <PathJksFile />
+  <PathTempDec>C:\Users\Paris Ariyan\Desktop\New folder (12)</PathTempDec>
+  <PathTempFw />
+  <PathTempFw2 />
+  <PathFw />
+  <PathJava />
+  <FileNameDec>Tuit_oFKsHIUn (1)</FileNameDec>
+  <FileNameCom>Tuit_oFKsHIUn (1)</FileNameCom>
+  <FileNameDexOdexOat />
+  <FileNameSmali />
+  <DropDownApkTool>apktool_2.6.1.jar</DropDownApkTool>
+  <DwordX>445</DwordX>
+  <DwordY>229</DwordY>
+  <DwordXmx>1024</DwordXmx>
+  <CheckBoxDecB>false</CheckBoxDecB>
+  <CheckBoxDecF>true</CheckBoxDecF>
+  <CheckBoxDecK>false</CheckBoxDecK>
+  <CheckBoxDecM>false</CheckBoxDecM>
+  <CheckBoxDecR>false</CheckBoxDecR>
+  <CheckBoxDecS>false</CheckBoxDecS>
+  <CheckBoxDecNC>false</CheckBoxDecNC>
+  <CheckBoxDecOMC>true</CheckBoxDecOMC>
+  <CheckBoxComC>false</CheckBoxComC>
+  <CheckBoxComD>false</CheckBoxComD>
+  <CheckBoxComF>true</CheckBoxComF>
+  <CheckBoxComNC>false</CheckBoxComNC>
+  <CheckBoxComAapt2>true</CheckBoxComAapt2>
+  <CheckBoxZipF>false</CheckBoxZipF>
+  <CheckBoxZipP>true</CheckBoxZipP>
+  <CheckBoxZipZ>false</CheckBoxZipZ>
+  <CheckBoxZipV>false</CheckBoxZipV>
+  <CheckBoxShellExt>false</CheckBoxShellExt>
+  <CheckBoxEnaLog>false</CheckBoxEnaLog>
+  <CheckBoxUseJks>false</CheckBoxUseJks>
+  <CheckBoxSignApk>true</CheckBoxSignApk>
+  <CheckBoxInstallApk>false</CheckBoxInstallApk>
+  <CheckBoxOverApk>false</CheckBoxOverApk>
+  <CheckBoxZipAfterSign>true</CheckBoxZipAfterSign>
+  <CheckBoxToolTips>false</CheckBoxToolTips>
+  <CheckBoxChkUpdate>false</CheckBoxChkUpdate>
+  <CheckBoxWinPos>false</CheckBoxWinPos>
+  <CheckBoxRememberPass>false</CheckBoxRememberPass>
+  <CheckBoxDisHistory>false</CheckBoxDisHistory>
+  <CheckBoxDisComMsgBox>false</CheckBoxDisComMsgBox>
+  <CheckBoxUseExtJava>false</CheckBoxUseExtJava>
+  <CheckBoxReadApk>false</CheckBoxReadApk>
+  <CheckBoxReplaceSpace>false</CheckBoxReplaceSpace>
+  <AskToSetupDir>false</AskToSetupDir>
+  <IsSidedLogOpened>false</IsSidedLogOpened>
+  <IsReset>false</IsReset>
+  <PassJks />
+  <DecApiLvl />
+  <ComApiLvl />
+  <ReplaceWithSpace>false</ReplaceWithSpace>
+  <CheckBoxTaskBar>true</CheckBoxTaskBar>
+  <v2SigningEnabled>Default</v2SigningEnabled>
+  <v3SigningEnabled>Default</v3SigningEnabled>
+  <v4SigningEnabled>False</v4SigningEnabled>
+  <Language>English (Default)</Language>
+  <CheckBoxCodePage>false</CheckBoxCodePage>
+  <CodePage>0</CodePage>
+  <CheckBoxAapt>false</CheckBoxAapt>
+  <CheckBoxUseJavaXmx>false</CheckBoxUseJavaXmx>
+  <TextBoxAapt />
+  <CheckBoxForceManifest>false</CheckBoxForceManifest>
+</APKEasyTool>
