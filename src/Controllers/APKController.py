@@ -18,8 +18,8 @@ class APKController:
         if not apk_urls:
             return jsonify({"error": "No APK URLs provided"}), 400
 
-        ##results = self.processor.process_batch(apk_urls, interval)
-        return jsonify({"status": "completed"})
+        results = self.processor.process_batch(apk_urls, interval)
+        return jsonify({"status": "completed", "results": results})
 
     def home(self):
         return "Class-Based Flask APK Service is running."
