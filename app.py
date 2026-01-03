@@ -50,6 +50,9 @@ apk_controller = APKController(processor)
 api_test_controller = ApiTestController()
 
 
+@app.route("/", methods=["GET"])
+def home():
+    return "404 not found"
 
 @app.route("/test", methods=["POST"])
 def test_route():
