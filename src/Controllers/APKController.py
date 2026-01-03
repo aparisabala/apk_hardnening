@@ -1,25 +1,32 @@
+from threading import Thread
+from flask import request, jsonify
 import os
-import time
-import uuid
-import shutil
-import subprocess
-from flask import Flask, request, jsonify
-from src.Lib.Hardening.APKBatchProcessor import APKBatchProcessor
+
 class APKController:
-    def __init__(self, processor: APKBatchProcessor):
+    def __init__(self, processor):
         self.processor = processor
 
-    def batch(self):
-        data = request.json if request.is_json else {}
+    def harden_background(self):
+        data = request.get_json(silent=True) or {}
 
-        apk_urls = data.get("apks", [])
-        interval = int(data.get("interval", 8))
+        # API key security
+        required_key = os.getenv("HARDENING_API_KEY")
+        provided_key = data.get("api_key") or request.headers.get("X-API-Key")
+        if required_key and provided_key != required_key:
+            return jsonify({"status": "failed", "error": "Unauthorized"}), 401
 
-        if not apk_urls:
-            return jsonify({"error": "No APK URLs provided"}), 400
+        apk_url = data.get("apk_url")
+        callback_url = data.get("callback_url")
 
-        results = self.processor.process_batch(apk_urls, interval)
-        return jsonify({"status": "completed", "results": results})
+        if not apk_url:
+            return jsonify({"status": "failed", "error": "apk_url is required"}), 400
+        if not callback_url:
+            return jsonify({"status": "failed", "error": "callback_url is required"}), 400
 
-    def home(self):
-        return "Class-Based Flask APK Service is running."
+        job_id = self.processor.start_background_hardening(apk_url, callback_url)
+
+        return jsonify({
+            "status": "accepted",
+            "job_id": job_id,
+            "message": "Hardening started in background. You will receive result via callback."
+        }), 202

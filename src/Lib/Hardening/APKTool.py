@@ -1,9 +1,4 @@
-import os
-import time
-import uuid
-import shutil
 import subprocess
-from flask import Flask, request, jsonify
 
 class APKTool:
     def __init__(self, jar_path):
@@ -13,19 +8,29 @@ class APKTool:
         try:
             result = subprocess.run(
                 command,
-                shell=True,
+                shell=False,
                 text=True,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
+                stderr=subprocess.PIPE,
+                timeout=3600
             )
-            return result.stdout + "\n" + result.stderr
+            output = result.stdout + result.stderr
+            if result.returncode != 0:
+                return f"ERROR (code {result.returncode}): {output}"
+            return output
+        except subprocess.TimeoutExpired:
+            return "ERROR: Command timed out"
         except Exception as e:
-            return str(e)
+            return f"EXCEPTION: {str(e)}"
 
     def decompile(self, apk_path, output_dir):
-        cmd = f"java -jar {self.jar_path} d {apk_path} -o {output_dir} --force"
-        return self.run(cmd)
+        return self.run([
+            "java", "-jar", self.jar_path,
+            "d", apk_path, "-o", output_dir, "--force"
+        ])
 
     def recompile(self, source_dir, output_apk):
-        cmd = f"java -jar {self.jar_path} b {source_dir} -o {output_apk}"
-        return self.run(cmd)
+        return self.run([
+            "java", "-jar", self.jar_path,
+            "b", source_dir, "-o", output_apk
+        ])
