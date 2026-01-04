@@ -5,11 +5,11 @@ load_dotenv()
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from src.Controllers.APKController import APKController
 from src.Lib.Hardening.APKTool import APKTool
 from src.Lib.Hardening.APKProcessor import APKProcessor
-from flask_socketio import SocketIO, emit
+from flask_socketio import SocketIO
 from src.Lib.Socket.emitter import init_socketio
 
 app = Flask(__name__)
@@ -48,15 +48,11 @@ def home():
 def harden():
     return apk_controller.harden_background()
 
-@app.route("/test-emit")
-def test_emit():
-    socketio.emit('progress_update', {
-        "job_id": "test123",
-        "event": "test",
-        "message": "Hello from Flask Socket.IO!"
-    })
-    return "Emitted test message"
+@app.route("/job-completed", methods=["POST"])
+def jobStatus():
+    data = request.get_json(silent=True) or {}
+    socketio.emit('job_completed', data)
+    return jsonify({"status": "ok"}), 200
 
 if __name__ == "__main__":
-    # FIXED: Use socketio.run() instead of app.run()
     socketio.run(app, host="0.0.0.0", port=8000, debug=True)

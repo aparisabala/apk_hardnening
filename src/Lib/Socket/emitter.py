@@ -1,8 +1,13 @@
 from flask_socketio import SocketIO
+
 _socketio: SocketIO = None
+
 def init_socketio(sio: SocketIO):
     global _socketio
     _socketio = sio
+
+def get_socketio() -> SocketIO:
+    return _socketio
 
 def emit(event: str, data: dict, namespace: str = None):
     if _socketio:

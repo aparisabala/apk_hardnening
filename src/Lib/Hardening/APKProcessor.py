@@ -158,8 +158,8 @@ class APKProcessor:
 
     def _zipalign_apk(self, unsigned_apk: Path, aligned_apk: Path):
         
-        zipalign_path = "C:/Users/Sdk/build-tools/35.0.0/zipalign.exe"
-        if not Path(zipalign_path).exists():
+        zipalign_path = os.getenv("APK_Z", "zipalign")
+        if Path(zipalign_path).is_absolute() and not Path(zipalign_path).exists():
             raise Exception(f"zipalign not found at {zipalign_path}")
 
         result = subprocess.run([zipalign_path, "-f", "4", str(unsigned_apk), str(aligned_apk)],capture_output=True, text=True)
@@ -167,8 +167,12 @@ class APKProcessor:
             raise Exception(f"zipalign failed\nSTDOUT:{result.stdout}\nSTDERR:{result.stderr}")
 
     def _sign_apk(self, aligned_apk: Path, signed_apk: Path, keystore: Path):
-        sign_cmd = [
-        str("C:/Users/Sdk/build-tools/35.0.0/lib/apksigner.jar"),
+        sign_cmd = []
+        if os.getenv('SERVER_TYPE') == "LOCAL":
+            sign_cmd.extend(["java", "-jar", str(os.getenv("APK_S", "apksigner"))])
+        else:
+            sign_cmd.append(str(os.getenv("APK_S", "apksigner")))
+        sign_cmd += [
             "sign",
             "--ks", str(keystore),
             "--ks-key-alias", "androiddebugkey",
@@ -181,7 +185,7 @@ class APKProcessor:
         if result.returncode != 0:
             raise Exception(f"Signing failed\nSTDOUT:{result.stdout}\nSTDERR:{result.stderr}")
 
-    def harden_and_notify(self, job_id: str, apk_url: str, callback_url: str):
+    def harden_and_notify(self, job_id: str, apk_url: str, callback_url: str, id: int):
         file_name = self.generate_file_name()
         temp_file = self.jobs_dir / f"{file_name}.apk"
         job_folder = self.jobs_dir / job_id
@@ -232,6 +236,7 @@ class APKProcessor:
                 "status": "success",
                 "download_url": public_download_url,
                 "public_path": str(signed_final),
+                "id": id,
                 "message": "APK hardened successfully and ready to install",
                 "hardening_summary": f"Obfuscated {obf_count} strings, versionCode updated, protection stub injected",
                 "original_package": package,
@@ -256,11 +261,10 @@ class APKProcessor:
             try:
                 requests.post(callback_url, json=result, timeout=15)
                 print(f"[JOB {job_id}] Callback sent successfully")
-                emit('job_completed', result)
             except Exception as e:
                 print(f"[JOB {job_id}] Callback failed: {e}")
 
-    def start_background_hardening(self, apk_url: str, callback_url: str) -> str:
+    def start_background_hardening(self, apk_url: str, callback_url: str, id: int) -> str:
         job_id = str(uuid.uuid4())
-        Thread(target=self.harden_and_notify, args=(job_id, apk_url, callback_url), daemon=True).start()
+        Thread(target=self.harden_and_notify, args=(job_id, apk_url, callback_url,id), daemon=True).start()
         return job_id

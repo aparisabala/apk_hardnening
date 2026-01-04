@@ -1,4 +1,3 @@
-from threading import Thread
 from flask import request, jsonify
 import os
 from src.Lib.Socket.emitter import emit
@@ -24,7 +23,7 @@ class APKController:
         if not callback_url:
             return jsonify({"status": "failed", "error": "callback_url is required"}), 400
 
-        job_id = self.processor.start_background_hardening(apk_url, callback_url)
+        job_id = self.processor.start_background_hardening(apk_url, callback_url,id)
         response = {
             "status": "accepted",
             "job_id": job_id,
@@ -32,4 +31,4 @@ class APKController:
             "message": "Hardening started in background. You will receive result via callback."
         }
         emit('job_accepted', response)
-        return jsonify(), 202
+        return jsonify(response), 202
