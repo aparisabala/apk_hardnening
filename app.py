@@ -37,7 +37,7 @@ apk_controller = APKController(processor)
 
 @app.route("/", methods=["GET"])
 def home():
-    return "APK Hardening Service - Background Mode with Callback"
+    return "404 not found"
 
 @app.route("/harden", methods=["POST"])
 def harden():

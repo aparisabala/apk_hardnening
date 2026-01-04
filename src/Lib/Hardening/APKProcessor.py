@@ -3,312 +3,224 @@ import uuid
 import shutil
 import random
 import string
-import requests,subprocess
+import requests
+import subprocess
 from threading import Thread
-import xml.etree.ElementTree as ET
 from pathlib import Path
-
-from threading import Thread
+import xml.etree.ElementTree as ET
 
 from src.Lib.Hardening.APKTool import APKTool
 
 
 class APKProcessor:
-    def __init__(self, jobs_dir, download_dir, apktool: APKTool, base_url: str):
-        self.jobs_dir = jobs_dir
-        self.download_dir = download_dir
+    
+    def __init__(self, jobs_dir: str, download_dir: str, apktool: APKTool, base_url: str):
+        self.jobs_dir = Path(jobs_dir)
+        self.download_dir = Path(download_dir)
         self.apktool = apktool
         self.base_url = base_url.rstrip("/")
 
-        os.makedirs(jobs_dir, exist_ok=True)
-        os.makedirs(download_dir, exist_ok=True)
+        self.jobs_dir.mkdir(parents=True, exist_ok=True)
+        self.download_dir.mkdir(parents=True, exist_ok=True)
 
-    def generate_file_name(self):
+    def generate_file_name(self) -> str:
         part1 = ''.join(random.sample(string.ascii_lowercase, 4))
-        part2 = ''.join(random.choices(
-            string.ascii_letters + string.digits, k=8))
+        part2 = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
         return f"{part1}_{part2}"
 
-    def download_apk(self, url, save_path):
-        cmd = f"curl -L --fail --connect-timeout 30 --silent \"{url}\" -o \"{save_path}\""
+    def download_apk(self, url: str, save_path: str) -> str:
+        cmd = f'curl -L --fail --connect-timeout 30 --silent "{url}" -o "{save_path}"'
         return self.apktool.run(cmd)
 
-    def harden_and_notify(self, job_id: str, apk_url: str, callback_url: str):
-        temp_file = os.path.join(self.jobs_dir, f"apk_{self.generate_file_name()}.apk")
-        job_folder = os.path.join(self.jobs_dir, job_id)
-        src_dir = os.path.join(job_folder, "src")
-        rebuilt_apk = os.path.join(job_folder, "rebuilt.apk")
-        final_name = f"{job_id}.apk"
+    def _parse_manifest(self, manifest_path: Path):
+        package = None
+        version_code = 1
+        version_name = "1.0"
 
-        # ABSOLUTE PUBLIC PATH FROM ENV
-        public_output_dir = os.getenv("HARDENED_APK_OUTPUT_DIR", self.download_dir)
-        public_final_path = os.path.join(public_output_dir, final_name)
+        if not manifest_path.exists():
+            return package, version_code, version_name
 
-        # Public download URL
-        public_domain = os.getenv("PUBLIC_DOMAIN", self.base_url).rstrip("/")
-        public_download_url = f"{public_domain}/hardened/{final_name}"
+        tree = ET.parse(manifest_path)
+        root = tree.getroot()
+        package = root.get("package")
 
-        os.makedirs(job_folder, exist_ok=True)
-        os.makedirs(public_output_dir, exist_ok=True)
-
-        result = {
-            "job_id": job_id,
-            "original_url": apk_url,
-            "status": "failed",
-            "error": "Unknown error"
-        }
+        version_code_str = root.get("{http://schemas.android.com/apk/res/android}versionCode", "1")
+        version_name = root.get("{http://schemas.android.com/apk/res/android}versionName", "1.0")
 
         try:
-            # Download
-            download_log = self.download_apk(apk_url, temp_file)
-            if not os.path.exists(temp_file) or os.path.getsize(temp_file) == 0:
-                raise Exception(f"Download failed: {download_log}")
+            version_code = int(version_code_str)
+        except:
+            version_code = 1
 
-            # Decompile
+        return package, version_code, version_name, tree, root
+
+    def _harden_manifest(self, root, tree, manifest_path: Path):
+        ET.register_namespace('android', 'http://schemas.android.com/apk/res/android')
+
+        application = root.find('application')
+        if application:
+            for attr in [
+                '{http://schemas.android.com/apk/res/android}debuggable',
+                '{http://schemas.android.com/apk/res/android}allowBackup',
+                '{http://schemas.android.com/apk/res/android}fullBackupContent',
+                '{http://schemas.android.com/apk/res/android}networkSecurityConfig'
+            ]:
+                application.attrib.pop(attr, None)
+
+        original_version_code = int(root.get("{http://schemas.android.com/apk/res/android}versionCode", "1"))
+        new_version_code = original_version_code + 1
+        root.set("{http://schemas.android.com/apk/res/android}versionCode", str(new_version_code))
+        version_name = root.get("{http://schemas.android.com/apk/res/android}versionName", "1.0")
+        root.set("{http://schemas.android.com/apk/res/android}versionName", f"{version_name} (hardened)")
+
+        tree.write(manifest_path, encoding="utf-8", xml_declaration=True)
+        return new_version_code
+
+    def _obfuscate_smali(self, smali_root: Path):
+        keywords = ["http://", "https://", "api.", "key=", "token=", "password="]
+        count = 0
+        if not smali_root.exists():
+            return count
+
+        for smali_file in smali_root.rglob("*.smali"):
+            try:
+                content = smali_file.read_text(encoding="utf-8", errors="ignore")
+                modified = False
+                for kw in keywords:
+                    if kw in content:
+                        content = content.replace(kw, f"HID_{random.randint(10000, 99999)}")
+                        modified = True
+                if modified:
+                    smali_file.write_text(content, encoding="utf-8")
+                    count += 1
+            except:
+                continue
+        return count
+
+    def _inject_protection_stub(self, src_dir: Path, package: str):
+        
+        package_path = package.replace(".", "/")
+        stub_path = src_dir / "smali" / package_path / "ProtectionLog.smali"
+        stub_path.parent.mkdir(parents=True, exist_ok=True)
+        stub_path.write_text(f'''.class public L{package_path}/ProtectionLog;
+        .super Ljava/lang/Object;
+
+        .method public static log()V
+            .locals 2
+            const-string v0, "HARDENING"
+            const-string v1, "This app is protected by hardening service"
+            invoke-static {{v0, v1}}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+            return-void
+        .end method
+        ''', encoding="utf-8")
+
+    def _zipalign_apk(self, unsigned_apk: Path, aligned_apk: Path):
+        
+        zipalign_path = os.getenv("APK_Z", "zipalign")
+        if not Path(zipalign_path).exists():
+            raise Exception(f"zipalign not found at {zipalign_path}")
+
+        result = subprocess.run([zipalign_path, "-f", "4", str(unsigned_apk), str(aligned_apk)],
+                                capture_output=True, text=True)
+        if result.returncode != 0 or not aligned_apk.exists():
+            raise Exception(f"zipalign failed\nSTDOUT:{result.stdout}\nSTDERR:{result.stderr}")
+
+    def _sign_apk(self, aligned_apk: Path, signed_apk: Path):
+        apksigner_path = os.getenv("APK_S", "apksigner")
+        if not Path(apksigner_path).exists():
+            raise Exception(f"apksigner not found at {apksigner_path}")
+
+        keystore = Path.home() / ".android/debug.keystore"
+        if not keystore.exists():
+            raise Exception(f"debug.keystore not found at {keystore}")
+
+        result = subprocess.run([
+            "java", "-jar", apksigner_path,
+            "sign",
+            "--ks", str(keystore),
+            "--ks-key-alias", "androiddebugkey",
+            "--ks-pass", "pass:android",
+            "--key-pass", "pass:android",
+            "--out", str(signed_apk),
+            str(aligned_apk)
+        ], capture_output=True, text=True)
+
+        if result.returncode != 0 or not signed_apk.exists():
+            raise Exception(f"Signing failed\nSTDOUT:{result.stdout}\nSTDERR:{result.stderr}")
+
+    def harden_and_notify(self, job_id: str, apk_url: str, callback_url: str):
+        file_name = self.generate_file_name()
+        temp_file = self.jobs_dir / f"{file_name}.apk"
+        job_folder = self.jobs_dir / job_id
+        src_dir = job_folder / "src"
+        rebuilt_apk = job_folder / "rebuilt.apk"
+        unsigned_apk = job_folder / "unsigned.apk"
+        aligned_apk = job_folder / "aligned.apk"
+
+        public_output_dir = Path(os.getenv("HARDENED_APK_OUTPUT_DIR", self.download_dir))
+        public_output_dir.mkdir(parents=True, exist_ok=True)
+        signed_final = public_output_dir / f"{file_name}.apk"
+
+        public_download_url = f"{os.getenv('PUBLIC_DOMAIN', self.base_url).rstrip('/')}/hardened/{job_id}.apk"
+
+        result = {"job_id": job_id, "original_url": apk_url, "status": "failed", "error": "Unknown error"}
+
+        try:
+            download_log = self.download_apk(apk_url, temp_file)
+            if not temp_file.exists() or temp_file.stat().st_size == 0:
+                raise Exception(download_log)
+
             decompile_log = self.apktool.decompile(temp_file, src_dir)
             if "Exception" in decompile_log:
-                raise Exception(f"Decompile failed: {decompile_log}")
+                raise Exception(decompile_log)
 
-            # ========================
-            # PROFESSIONAL HARDENING - PACKAGE NAME PRESERVED
-            # ========================
+            manifest_path = src_dir / "AndroidManifest.xml"
+            package, version_code, version_name, tree, root = self._parse_manifest(manifest_path)
 
-            hardening_log = "\n=== PROFESSIONAL HARDENING (INSTALLABLE & SAFE) ===\n"
+            new_version_code = self._harden_manifest(root, tree, manifest_path) if root else 1
+            obf_count = self._obfuscate_smali(src_dir / "smali")
 
-            manifest_path = os.path.join(src_dir, "AndroidManifest.xml")
+            if package:
+                self._inject_protection_stub(src_dir, package)
 
-            original_package = None
-            original_version_code = 1
-            original_version_name = "1.0"
-
-            if os.path.exists(manifest_path):
-                tree = ET.parse(manifest_path)
-                root = tree.getroot()
-
-                original_package = root.get("package")
-                version_code_str = root.get("{http://schemas.android.com/apk/res/android}versionCode", "1")
-                original_version_name = root.get("{http://schemas.android.com/apk/res/android}versionName", "1.0")
-
-                try:
-                    original_version_code = int(version_code_str)
-                except:
-                    original_version_code = 1
-
-                # Register namespace
-                ns = {'android': 'http://schemas.android.com/apk/res/android'}
-                ET.register_namespace('android', ns['android'])
-
-                application = root.find('application')
-                if application is not None:
-                    # Remove risky flags
-                    risky_attrs = [
-                        '{http://schemas.android.com/apk/res/android}debuggable',
-                        '{http://schemas.android.com/apk/res/android}allowBackup',
-                        '{http://schemas.android.com/apk/res/android}fullBackupContent',
-                        '{http://schemas.android.com/apk/res/android}networkSecurityConfig'
-                    ]
-                    for attr in risky_attrs:
-                        if attr in application.attrib:
-                            del application.attrib[attr]
-                            hardening_log += f"- Removed {attr.split('}')[1]}\n"
-
-                # Increase versionCode by 1 to allow update install
-                new_version_code = original_version_code + 1
-                root.set("{http://schemas.android.com/apk/res/android}versionCode", str(new_version_code))
-                hardening_log += f"- Increased versionCode: {original_version_code} → {new_version_code} (allows install over original)\n"
-
-                # Optional: Mark versionName as hardened
-                root.set("{http://schemas.android.com/apk/res/android}versionName", f"{original_version_name} (hardened)")
-
-                tree.write(manifest_path, encoding="utf-8", xml_declaration=True)
-
-                if original_package:
-                    hardening_log += f"- Preserved original package name: {original_package}\n"
-                else:
-                    hardening_log += "- Warning: No package name found in manifest\n"
-            else:
-                hardening_log += "- ERROR: AndroidManifest.xml not found\n"
-
-            # Basic string obfuscation (safe - won't break app)
-            sensitive_keywords = ["http://", "https://", "api.", "key=", "token=", "password="]
-            obf_count = 0
-            smali_root = Path(src_dir) / "smali"
-            if smali_root.exists():
-                for smali_file in smali_root.rglob("*.smali"):
-                    try:
-                        content = smali_file.read_text(encoding="utf-8", errors="ignore")
-                        modified = False
-                        for kw in sensitive_keywords:
-                            if kw in content:
-                                placeholder = f"HID_{random.randint(10000,99999)}"
-                                content = content.replace(kw, placeholder)
-                                modified = True
-                        if modified:
-                            smali_file.write_text(content, encoding="utf-8")
-                            obf_count += 1
-                    except:
-                        continue
-                hardening_log += f"- Obfuscated {obf_count} sensitive strings\n"
-            else:
-                hardening_log += "- Smali directory not found\n"
-
-            # Optional: Inject simple protection log
-            if original_package:
-                package_path = original_package.replace(".", "/")
-                stub_path = Path(src_dir) / "smali" / package_path / "ProtectionLog.smali"
-                stub_path.parent.mkdir(parents=True, exist_ok=True)
-
-                stub_code = f'''.class public L{package_path}/ProtectionLog;
-                .super Ljava/lang/Object;
-
-                .method public static log()V
-                    .locals 2
-                    const-string v0, "HARDENING"
-                    const-string v1, "This app is protected by hardening service"
-                    invoke-static {{v0, v1}}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
-                    return-void
-                .end method
-                '''
-                stub_path.write_text(stub_code, encoding="utf-8")
-                hardening_log += "- Injected protection log stub\n"
-
-            hardening_log += "=== HARDENING COMPLETE - APP IS NOW INSTALLABLE ===\n"
-
-            # Recompile
             recompile_log = self.apktool.recompile(src_dir, rebuilt_apk)
-            if not os.path.exists(rebuilt_apk):
-                raise Exception(f"Recompile failed: {recompile_log}")
+            if not rebuilt_apk.exists():
+                raise Exception(recompile_log)
 
-            # TEMP UNSIGNED APK
-            unsigned_apk = os.path.join(job_folder, "unsigned.apk")
             shutil.copy(rebuilt_apk, unsigned_apk)
-
-            # TEMP UNSIGNED APK
-            unsigned_apk = os.path.join(job_folder, "unsigned.apk")
-            try:
-                shutil.copy(rebuilt_apk, unsigned_apk)
-            except Exception as e:
-                raise Exception(f"[COPY ERROR] Failed to create unsigned APK: {e}")
-
-            # ZIPALIGN
-            zipalign_path = os.getenv("APK_Z", "zipalign")
-            aligned_apk = os.path.join(job_folder, "aligned.apk")
-
-            try:
-                if not os.path.exists(zipalign_path):
-                    raise Exception(f"zipalign not found at: {zipalign_path}")
-
-                align_cmd = [zipalign_path, "-f", "4", unsigned_apk, aligned_apk]
-                align_result = subprocess.run(
-                    align_cmd,
-                    capture_output=True,
-                    text=True
-                )
-
-                if align_result.returncode != 0:
-                    raise Exception(
-                        f"zipalign failed\n"
-                        f"STDOUT: {align_result.stdout}\n"
-                        f"STDERR: {align_result.stderr}"
-                    )
-
-                if not os.path.exists(aligned_apk):
-                    raise Exception("aligned.apk not created")
-
-            except Exception as e:
-                raise Exception(f"[ZIPALIGN ERROR] {e}")
-
-            # SIGN WITH DEBUG KEYSTORE
-            apksigner_path = os.getenv("APK_S", "apksigner")
-            signed_final = public_final_path  # final output
-
-            try:
-                if not os.path.exists(apksigner_path):
-                    raise Exception(f"apksigner.jar not found at: {apksigner_path}")
-
-                debug_keystore = os.path.expanduser("~/.android/debug.keystore")
-                if not os.path.exists(debug_keystore):
-                    raise Exception(f"debug.keystore not found at: {debug_keystore}")
-
-                sign_cmd = [
-                    "java", "-jar", apksigner_path,
-                    "sign",
-                    "--ks", debug_keystore,
-                    "--ks-key-alias", "androiddebugkey",
-                    "--ks-pass", "pass:android",
-                    "--key-pass", "pass:android",
-                    "--out", signed_final,
-                    aligned_apk
-                ]
-
-                sign_result = subprocess.run(
-                    sign_cmd,
-                    capture_output=True,
-                    text=True
-                )
-
-                if sign_result.returncode != 0:
-                    raise Exception(
-                        f"Signing failed\n"
-                        f"STDOUT: {sign_result.stdout}\n"
-                        f"STDERR: {sign_result.stderr}"
-                    )
-
-                if not os.path.exists(signed_final):
-                    raise Exception("Signed APK not created")
-
-            except Exception as e:
-                raise Exception(f"[SIGNING ERROR] {e}")
-
-
-            hardening_log += "- APK zipaligned and signed with debug keystore\n"
-            
-            # COPY ONLY TO PUBLIC PATH (no internal copy)
-            #shutil.copy(rebuilt_apk, public_final_path)
+            self._zipalign_apk(unsigned_apk, aligned_apk)
+            self._sign_apk(aligned_apk, signed_final)
 
             result.update({
                 "status": "success",
                 "download_url": public_download_url,
-                "public_path": public_final_path,
+                "public_path": str(signed_final),
                 "message": "APK hardened successfully and ready to install",
-                "hardening_summary": hardening_log.strip(),
-                "original_package": original_package,
+                "hardening_summary": f"Obfuscated {obf_count} strings, versionCode updated, protection stub injected",
+                "original_package": package,
                 "new_version_code": new_version_code,
-                "log": download_log + "\n" + decompile_log + "\n" + hardening_log + "\n" + recompile_log
+                "log": "\n".join([download_log, decompile_log, recompile_log])
             })
 
         except Exception as e:
-            result["error"] = f"Hardening failed: {str(e)}"
+            result["error"] = str(e)
 
         finally:
-            # SMART CLEANUP - ONLY CURRENT JOB TEMP FILES
             try:
                 if os.path.exists(temp_file):
                     os.remove(temp_file)
-                    print(f"[CLEANUP] Deleted temp APK: {temp_file}")
-
                 if os.path.exists(job_folder):
                     shutil.rmtree(job_folder)
-                    print(f"[CLEANUP] Deleted job folder: {job_folder}")
-
-                print(f"[CLEANUP] Preserved final APK: {public_final_path}")
-
-            except Exception as cleanup_error:
-                print(f"[CLEANUP ERROR] {cleanup_error}")
-
-            # SEND CALLBACK
+            except:
+                pass
+            print(f"[JOB {job_id}] Finished with status: success, sending callback")
             try:
                 requests.post(callback_url, json=result, timeout=15)
-                print(f"[CALLBACK] Sent result for job {job_id}")
+                print(f"[JOB {job_id}] Callback sent successfully")
             except Exception as e:
-                print(f"[CALLBACK FAILED] {e}")      
-    
-    def start_background_hardening(self, apk_url: str, callback_url: str):
+                print(f"[JOB {job_id}] Callback failed: {e}")
+
+    def start_background_hardening(self, apk_url: str, callback_url: str) -> str:
         job_id = str(uuid.uuid4())
-        thread = Thread(
-            target=self.harden_and_notify,
-            args=(job_id, apk_url, callback_url),
-            daemon=True
-        )
-        thread.start()
+        Thread(target=self.harden_and_notify, args=(job_id, apk_url, callback_url), daemon=True).start()
         return job_id
