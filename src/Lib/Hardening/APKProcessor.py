@@ -30,18 +30,22 @@ class APKProcessor:
 
         if not keystore_path.exists():
             cmd = [
-                "keytool", "-genkeypair",
+                "keytool",
+                "-genkeypair",
+                "-v",
+                "-keystore", str(keystore_path),
+                "-storepass", "android",
+                "-keypass", "android",
                 "-alias", "androiddebugkey",
                 "-keyalg", "RSA",
                 "-keysize", "2048",
                 "-validity", "10000",
-                "-keystore", str(keystore_path),
-                "-storepass", "android",
-                "-keypass", "android",
-                "-dname", "CN=Job,O=Hardening,C=US"
+                "-dname", "CN=Hardening,O=APK,L=Local,C=US"
             ]
-            subprocess.run(cmd, check=True)
-        return keystore_path
+            result =  subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                raise Exception(f"Failed to generate keystore\nSTDOUT:{result.stdout}\nSTDERR:{result.stderr}")
+            return keystore_path
 
     def generate_file_name(self) -> str:
         part1 = ''.join(random.sample(string.ascii_lowercase, 4))
@@ -153,7 +157,7 @@ class APKProcessor:
 
     def _zipalign_apk(self, unsigned_apk: Path, aligned_apk: Path):
         
-        zipalign_path = os.getenv("APK_Z", "zipalign")
+        zipalign_path = os.getenv("APK_Z", "/opt/android-sdk/build-tools/35.0.1/zipalign")
         if not Path(zipalign_path).exists():
             raise Exception(f"zipalign not found at {zipalign_path}")
 
@@ -163,12 +167,8 @@ class APKProcessor:
             raise Exception(f"zipalign failed\nSTDOUT:{result.stdout}\nSTDERR:{result.stderr}")
 
     def _sign_apk(self, aligned_apk: Path, signed_apk: Path, keystore: Path):
-        apksigner_path = os.getenv("APK_S", "apksigner")
-        if not Path(apksigner_path).exists():
-            raise Exception(f"apksigner not found at {apksigner_path}")
-
-        result = subprocess.run([
-            "java", "-jar", apksigner_path,
+        sign_cmd = [
+        str(os.getenv("APK_S", "/opt/android-sdk/build-tools/35.0.1/apksigner")),
             "sign",
             "--ks", str(keystore),
             "--ks-key-alias", "androiddebugkey",
@@ -176,9 +176,9 @@ class APKProcessor:
             "--key-pass", "pass:android",
             "--out", str(signed_apk),
             str(aligned_apk)
-        ], capture_output=True, text=True)
-
-        if result.returncode != 0 or not signed_apk.exists():
+        ]
+        result = subprocess.run(sign_cmd, capture_output=True, text=True)
+        if result.returncode != 0:
             raise Exception(f"Signing failed\nSTDOUT:{result.stdout}\nSTDERR:{result.stderr}")
 
     def harden_and_notify(self, job_id: str, apk_url: str, callback_url: str):
@@ -226,7 +226,7 @@ class APKProcessor:
 
             shutil.copy(rebuilt_apk, unsigned_apk)
             self._zipalign_apk(unsigned_apk, aligned_apk)
-            self._sign_apk(aligned_apk, signed_final,keystore)
+            self._sign_apk(aligned_apk, signed_final, keystore)
 
             result.update({
                 "status": "success",
