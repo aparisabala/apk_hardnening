@@ -10,8 +10,6 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 import hashlib
 from src.Lib.Hardening.APKTool import APKTool
-
-
 class APKProcessor:
     
     def __init__(self, jobs_dir: str, download_dir: str, apktool: APKTool, base_url: str):
@@ -164,14 +162,10 @@ class APKProcessor:
         if result.returncode != 0 or not aligned_apk.exists():
             raise Exception(f"zipalign failed\nSTDOUT:{result.stdout}\nSTDERR:{result.stderr}")
 
-    def _sign_apk(self, aligned_apk: Path, signed_apk: Path, job_id: str):
+    def _sign_apk(self, aligned_apk: Path, signed_apk: Path, keystore: Path):
         apksigner_path = os.getenv("APK_S", "apksigner")
         if not Path(apksigner_path).exists():
             raise Exception(f"apksigner not found at {apksigner_path}")
-
-        keystore = self._keystore_for_job(job_id)
-        if not keystore.exists():
-            raise Exception(f"debug.keystore not found at {keystore}")
 
         result = subprocess.run([
             "java", "-jar", apksigner_path,
@@ -225,10 +219,14 @@ class APKProcessor:
             recompile_log = self.apktool.recompile(src_dir, rebuilt_apk)
             if not rebuilt_apk.exists():
                 raise Exception(recompile_log)
+            
+            keystore = self._keystore_for_job(job_id)
+            if not keystore.exists():
+                raise Exception(f"debug.keystore not found at {keystore}")
 
             shutil.copy(rebuilt_apk, unsigned_apk)
             self._zipalign_apk(unsigned_apk, aligned_apk)
-            self._sign_apk(aligned_apk, signed_final,job_id)
+            self._sign_apk(aligned_apk, signed_final,keystore)
 
             result.update({
                 "status": "success",
@@ -250,6 +248,8 @@ class APKProcessor:
                     os.remove(temp_file)
                 if os.path.exists(job_folder):
                     shutil.rmtree(job_folder)
+                if keystore.exists():
+                    keystore.unlink()
             except:
                 pass
             print(f"[JOB {job_id}] Finished with status: success, sending callback")
