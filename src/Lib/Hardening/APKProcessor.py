@@ -8,7 +8,7 @@ import subprocess
 from threading import Thread
 from pathlib import Path
 import xml.etree.ElementTree as ET
-
+import hashlib
 from src.Lib.Hardening.APKTool import APKTool
 
 
@@ -22,6 +22,28 @@ class APKProcessor:
 
         self.jobs_dir.mkdir(parents=True, exist_ok=True)
         self.download_dir.mkdir(parents=True, exist_ok=True)
+        
+    def _keystore_for_job(self, job_id: str) -> Path:
+        keystore_dir = Path(self.jobs_dir) / "keystores"
+        keystore_dir.mkdir(parents=True, exist_ok=True)
+
+        safe_name = hashlib.sha256(job_id.encode()).hexdigest()[:16]
+        keystore_path = keystore_dir / f"{safe_name}.keystore"
+
+        if not keystore_path.exists():
+            cmd = [
+                "keytool", "-genkeypair",
+                "-alias", "androiddebugkey",
+                "-keyalg", "RSA",
+                "-keysize", "2048",
+                "-validity", "10000",
+                "-keystore", str(keystore_path),
+                "-storepass", "android",
+                "-keypass", "android",
+                "-dname", "CN=Job,O=Hardening,C=US"
+            ]
+            subprocess.run(cmd, check=True)
+        return keystore_path
 
     def generate_file_name(self) -> str:
         part1 = ''.join(random.sample(string.ascii_lowercase, 4))
@@ -142,12 +164,12 @@ class APKProcessor:
         if result.returncode != 0 or not aligned_apk.exists():
             raise Exception(f"zipalign failed\nSTDOUT:{result.stdout}\nSTDERR:{result.stderr}")
 
-    def _sign_apk(self, aligned_apk: Path, signed_apk: Path):
+    def _sign_apk(self, aligned_apk: Path, signed_apk: Path, job_id: str):
         apksigner_path = os.getenv("APK_S", "apksigner")
         if not Path(apksigner_path).exists():
             raise Exception(f"apksigner not found at {apksigner_path}")
 
-        keystore = Path.home() / ".android/debug.keystore"
+        keystore = self._keystore_for_job(job_id)
         if not keystore.exists():
             raise Exception(f"debug.keystore not found at {keystore}")
 
@@ -206,7 +228,7 @@ class APKProcessor:
 
             shutil.copy(rebuilt_apk, unsigned_apk)
             self._zipalign_apk(unsigned_apk, aligned_apk)
-            self._sign_apk(aligned_apk, signed_final)
+            self._sign_apk(aligned_apk, signed_final,job_id)
 
             result.update({
                 "status": "success",
