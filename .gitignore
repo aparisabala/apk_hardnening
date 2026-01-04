@@ -9,3 +9,4 @@ __pycache__
 downloads
 jobs
 apktool/Help
+.env
