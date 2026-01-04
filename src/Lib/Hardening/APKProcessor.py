@@ -29,8 +29,25 @@ class APKProcessor:
         return f"{part1}_{part2}"
 
     def download_apk(self, url: str, save_path: str) -> str:
-        cmd = f'curl -L --fail --connect-timeout 30 --silent "{url}" -o "{save_path}"'
-        return self.apktool.run(cmd)
+        cmd = [
+            "curl",
+            "-L",
+            "--fail",
+            "--connect-timeout", "30",
+            "--silent",
+            url,
+            "-o",
+            save_path
+        ]
+
+        try:
+            result = self.apktool.run(cmd)  # Make sure apktool.run handles list input
+            return result
+        except FileNotFoundError:
+            raise Exception("Curl is not installed or not in PATH")
+        except Exception as e:
+            raise Exception(f"APK download failed: {e}")
+
 
     def _parse_manifest(self, manifest_path: Path):
         package = None
