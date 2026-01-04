@@ -2,4 +2,7 @@ Flask
 flask-sock      
 requests      
 python-dotenv       
-lxml             
+lxml   
+flask-socketio
+python-socketio
+eventlet       

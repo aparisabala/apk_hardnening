@@ -9,8 +9,13 @@ from flask import Flask, jsonify
 from src.Controllers.APKController import APKController
 from src.Lib.Hardening.APKTool import APKTool
 from src.Lib.Hardening.APKProcessor import APKProcessor
+from flask_socketio import SocketIO, emit
+from src.Lib.Socket.emitter import init_socketio
 
 app = Flask(__name__)
+
+socketio = SocketIO(app, cors_allowed_origins="*") 
+init_socketio(socketio)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -43,5 +48,15 @@ def home():
 def harden():
     return apk_controller.harden_background()
 
+@app.route("/test-emit")
+def test_emit():
+    socketio.emit('progress_update', {
+        "job_id": "test123",
+        "event": "test",
+        "message": "Hello from Flask Socket.IO!"
+    })
+    return "Emitted test message"
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000, debug=True)
+    # FIXED: Use socketio.run() instead of app.run()
+    socketio.run(app, host="0.0.0.0", port=8000, debug=True)

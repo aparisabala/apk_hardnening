@@ -10,6 +10,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 import hashlib
 from src.Lib.Hardening.APKTool import APKTool
+from src.Lib.Socket.emitter import emit
 class APKProcessor:
     
     def __init__(self, jobs_dir: str, download_dir: str, apktool: APKTool, base_url: str):
@@ -157,18 +158,17 @@ class APKProcessor:
 
     def _zipalign_apk(self, unsigned_apk: Path, aligned_apk: Path):
         
-        zipalign_path = os.getenv("APK_Z", "/opt/android-sdk/build-tools/35.0.1/zipalign")
+        zipalign_path = "C:/Users/Sdk/build-tools/35.0.0/zipalign.exe"
         if not Path(zipalign_path).exists():
             raise Exception(f"zipalign not found at {zipalign_path}")
 
-        result = subprocess.run([zipalign_path, "-f", "4", str(unsigned_apk), str(aligned_apk)],
-                                capture_output=True, text=True)
+        result = subprocess.run([zipalign_path, "-f", "4", str(unsigned_apk), str(aligned_apk)],capture_output=True, text=True)
         if result.returncode != 0 or not aligned_apk.exists():
             raise Exception(f"zipalign failed\nSTDOUT:{result.stdout}\nSTDERR:{result.stderr}")
 
     def _sign_apk(self, aligned_apk: Path, signed_apk: Path, keystore: Path):
         sign_cmd = [
-        str(os.getenv("APK_S", "/opt/android-sdk/build-tools/35.0.1/apksigner")),
+        str("C:/Users/Sdk/build-tools/35.0.0/lib/apksigner.jar"),
             "sign",
             "--ks", str(keystore),
             "--ks-key-alias", "androiddebugkey",
@@ -256,6 +256,7 @@ class APKProcessor:
             try:
                 requests.post(callback_url, json=result, timeout=15)
                 print(f"[JOB {job_id}] Callback sent successfully")
+                emit('job_completed', result)
             except Exception as e:
                 print(f"[JOB {job_id}] Callback failed: {e}")
 
