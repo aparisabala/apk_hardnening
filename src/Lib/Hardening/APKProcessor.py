@@ -261,7 +261,7 @@ class APKProcessor:
             print(f"[JOB {job_id}] Finished with status: success, sending callback")
             try:
                 requests.post(callback_url, json=result, timeout=15)
-                print(f"[JOB {job_id}] Callback sent successfully")
+                print(f"[JOB {job_id}] Callback sent successfully to {callback_url}")
             except Exception as e:
                 print(f"[JOB {job_id}] Callback failed: {e}")
 
