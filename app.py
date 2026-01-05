@@ -1,5 +1,3 @@
-import eventlet
-eventlet.monkey_patch()
 import os
 import sys
 from dotenv import load_dotenv
@@ -16,7 +14,7 @@ from src.Lib.Socket.emitter import init_socketio
 
 app = Flask(__name__)
 
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet") 
+socketio = SocketIO(app,cors_allowed_origins="*",async_mode="gevent")
 init_socketio(socketio)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
