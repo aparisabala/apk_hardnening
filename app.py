@@ -14,7 +14,7 @@ from src.Lib.Socket.emitter import init_socketio
 
 app = Flask(__name__)
 
-socketio = SocketIO(app,cors_allowed_origins="*",async_mode="gevent")
+socketio = SocketIO(app, cors_allowed_origins="*") 
 init_socketio(socketio)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -42,7 +42,7 @@ apk_controller = APKController(processor)
 
 @app.route("/", methods=["GET"])
 def home():
-    return "404 not found - 1.1.3"
+    return "404 not found - 1.1.2"
 
 @app.route("/harden", methods=["POST"])
 def harden():
@@ -55,4 +55,4 @@ def jobStatus():
     return jsonify({"status": "ok"}), 200
 
 if __name__ == "__main__":
-    socketio.run(app, host="0.0.0.0", port=8001, debug=True)
+    socketio.run(app, host="0.0.0.0", port=8000, debug=True)
