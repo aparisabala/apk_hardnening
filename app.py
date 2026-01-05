@@ -1,3 +1,5 @@
+import eventlet
+eventlet.monkey_patch()
 import os
 import sys
 from dotenv import load_dotenv
@@ -11,8 +13,7 @@ from src.Lib.Hardening.APKTool import APKTool
 from src.Lib.Hardening.APKProcessor import APKProcessor
 from flask_socketio import SocketIO
 from src.Lib.Socket.emitter import init_socketio
-import eventlet
-eventlet.monkey_patch()
+
 app = Flask(__name__)
 
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet") 
