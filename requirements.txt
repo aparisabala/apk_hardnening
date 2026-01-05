@@ -5,6 +5,4 @@ python-dotenv
 lxml   
 flask-socketio
 python-socketio
-eventlet  
-gevent 
-gevent-websocket
+eventlet

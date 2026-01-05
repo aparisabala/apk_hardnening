@@ -14,7 +14,14 @@ from src.Lib.Socket.emitter import init_socketio
 
 app = Flask(__name__)
 
-socketio = SocketIO(app, cors_allowed_origins="*") 
+# Critical: Use eventlet for async WebSocket support
+socketio = SocketIO(
+    app,
+    async_mode='eventlet',
+    cors_allowed_origins="*",
+    # Optional: logger=True, engineio_logger=True for debugging
+)
+
 init_socketio(socketio)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -23,7 +30,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_URL = os.getenv("HARDENING_BASE_URL", "http://localhost:8000")
 DOWNLOAD_DIR = os.getenv("HARDENING_DOWNLOAD_DIR", os.path.join(BASE_DIR, "downloads"))
 
-apktool_path = os.path.join(BASE_DIR, "./apktool/Apktool/apktool_2.9.2.jar")
+apktool_path = os.path.join(BASE_DIR, "apktool/Apktool/apktool_2.9.2.jar")
 jobs_dir = os.path.join(BASE_DIR, "jobs")
 
 os.makedirs(jobs_dir, exist_ok=True)
