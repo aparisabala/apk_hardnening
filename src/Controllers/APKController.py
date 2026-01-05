@@ -17,13 +17,18 @@ class APKController:
         apk_url = data.get("apk_url")
         callback_url = data.get("callback_url")
         id = data.get("id")
+        domain = data.get("service_domain")
 
         if not apk_url:
             return jsonify({"status": "failed", "error": "apk_url is required"}), 400
         if not callback_url:
             return jsonify({"status": "failed", "error": "callback_url is required"}), 400
+        if not id:
+            return jsonify({"status": "failed", "error": "id required"}), 400
+        if not domain:
+            return jsonify({"status": "failed", "error": "domain required"}), 400
 
-        job_id = self.processor.start_background_hardening(apk_url, callback_url,id)
+        job_id = self.processor.start_background_hardening(apk_url, callback_url,id,domain)
         response = {
             "status": "accepted",
             "job_id": job_id,

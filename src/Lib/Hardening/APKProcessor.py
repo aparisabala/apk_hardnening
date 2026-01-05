@@ -185,7 +185,7 @@ class APKProcessor:
         if result.returncode != 0:
             raise Exception(f"Signing failed\nSTDOUT:{result.stdout}\nSTDERR:{result.stderr}")
 
-    def harden_and_notify(self, job_id: str, apk_url: str, callback_url: str, id: int):
+    def harden_and_notify(self, job_id: str, apk_url: str, callback_url: str, id: int, domain: string):
         file_name = self.generate_file_name()
         temp_file = self.jobs_dir / f"{file_name}.apk"
         job_folder = self.jobs_dir / job_id
@@ -196,7 +196,7 @@ class APKProcessor:
 
         public_output_dir = Path(os.getenv("HARDENED_APK_OUTPUT_DIR", self.download_dir))
         public_output_dir.mkdir(parents=True, exist_ok=True)
-        signed_final = public_output_dir / f"{file_name}.apk"
+        signed_final = public_output_dir / f"uploads/{domain}/app/apk/{file_name}.apk"
 
         public_download_url = f"{os.getenv('PUBLIC_DOMAIN', self.base_url).rstrip('/')}/hardened/{job_id}.apk"
 
@@ -237,6 +237,7 @@ class APKProcessor:
                 "download_url": public_download_url,
                 "public_path": str(signed_final),
                 "id": id,
+                "file_name": f"{file_name}.apk",
                 "message": "APK hardened successfully and ready to install",
                 "hardening_summary": f"Obfuscated {obf_count} strings, versionCode updated, protection stub injected",
                 "original_package": package,
@@ -264,7 +265,7 @@ class APKProcessor:
             except Exception as e:
                 print(f"[JOB {job_id}] Callback failed: {e}")
 
-    def start_background_hardening(self, apk_url: str, callback_url: str, id: int) -> str:
+    def start_background_hardening(self, apk_url: str, callback_url: str, id: int, domain: string) -> str:
         job_id = str(uuid.uuid4())
-        Thread(target=self.harden_and_notify, args=(job_id, apk_url, callback_url,id), daemon=True).start()
+        Thread(target=self.harden_and_notify, args=(job_id, apk_url, callback_url,id, domain), daemon=True).start()
         return job_id
