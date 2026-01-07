@@ -14,19 +14,18 @@ from src.Lib.Socket.emitter import init_socketio
 
 app = Flask(__name__)
 
-# Critical: Use eventlet for async WebSocket support
+
 socketio = SocketIO(
     app,
     async_mode='eventlet',
-    cors_allowed_origins="*",
-    # Optional: logger=True, engineio_logger=True for debugging
+    cors_allowed_origins=["https://xco.lol", "http://localhost:3000"],
 )
 
 init_socketio(socketio)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Config from env
+
 BASE_URL = os.getenv("HARDENING_BASE_URL", "http://localhost:8000")
 DOWNLOAD_DIR = os.getenv("HARDENING_DOWNLOAD_DIR", os.path.join(BASE_DIR, "downloads"))
 
@@ -49,7 +48,7 @@ apk_controller = APKController(processor)
 
 @app.route("/", methods=["GET"])
 def home():
-    return "404 not found - 1.1.2"
+    return "404 not found - 1.1.4"
 
 @app.route("/harden", methods=["POST"])
 def harden():
