@@ -19,6 +19,8 @@ class APKController:
         id = data.get("id")
         domain = data.get("service_domain")
         file_name = data.get("file_name")
+        package_name_method = data.get("package_name_method")
+        package_name = data.get("package_name")
         
         if not apk_url:
             return jsonify({"status": "failed", "error": "apk_url is required"}), 400
@@ -31,8 +33,10 @@ class APKController:
         if not file_name:
             return jsonify({"status": "failed", "error": "File name required"}), 400
         
+        if not package_name_method:
+            return jsonify({"status": "failed", "error": "Package name Method required"}), 400
 
-        job_id = self.processor.start_background_hardening(apk_url, callback_url,id,domain,file_name)
+        job_id = self.processor.start_background_hardening(apk_url, callback_url,id,domain,file_name,package_name_method,package_name)
         response = {
             "status": "accepted",
             "job_id": job_id,

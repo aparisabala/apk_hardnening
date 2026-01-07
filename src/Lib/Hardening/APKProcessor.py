@@ -11,6 +11,7 @@ import xml.etree.ElementTree as ET
 import hashlib
 from src.Lib.Hardening.APKTool import APKTool
 from src.Lib.Socket.emitter import emit
+from typing import Optional
 class APKProcessor:
     
     def __init__(self, jobs_dir: str, download_dir: str, apktool: APKTool, base_url: str):
@@ -74,17 +75,20 @@ class APKProcessor:
             raise Exception(f"APK download failed: {e}")
 
 
-    def _parse_manifest(self, manifest_path: Path):
-        package = None
+    def _parse_manifest(self, manifest_path: Path,package_name_method: string,  package_name: Optional[str] = None):
+        
+        tree = ET.parse(manifest_path)
+        root = tree.getroot()
+        package = root.get("package")
+        if package_name_method == "no_random":
+            if package_name is not None:
+                package = package_name
+ 
         version_code = 1
         version_name = "1.0"
 
         if not manifest_path.exists():
             return package, version_code, version_name
-
-        tree = ET.parse(manifest_path)
-        root = tree.getroot()
-        package = root.get("package")
 
         version_code_str = root.get("{http://schemas.android.com/apk/res/android}versionCode", "1")
         version_name = root.get("{http://schemas.android.com/apk/res/android}versionName", "1.0")
@@ -185,7 +189,7 @@ class APKProcessor:
         if result.returncode != 0:
             raise Exception(f"Signing failed\nSTDOUT:{result.stdout}\nSTDERR:{result.stderr}")
 
-    def harden_and_notify(self, job_id: str, apk_url: str, callback_url: str, id: int, domain: string, file_name: string):
+    def harden_and_notify(self, job_id: str, apk_url: str, callback_url: str, id: int, domain: string, file_name: string, package_name_method: string,  package_name: Optional[str] = None):
         temp_file = self.jobs_dir / f"{file_name}.apk"
         job_folder = self.jobs_dir / job_id
         src_dir = job_folder / "src"
@@ -211,7 +215,7 @@ class APKProcessor:
                 raise Exception(decompile_log)
 
             manifest_path = src_dir / "AndroidManifest.xml"
-            package, version_code, version_name, tree, root = self._parse_manifest(manifest_path)
+            package, version_code, version_name, tree, root = self._parse_manifest(manifest_path,package_name_method,package_name)
 
             new_version_code = self._harden_manifest(root, tree, manifest_path) if root else 1
             obf_count = self._obfuscate_smali(src_dir / "smali")
@@ -264,7 +268,7 @@ class APKProcessor:
             except Exception as e:
                 print(f"[JOB {job_id}] Callback failed: {e}")
 
-    def start_background_hardening(self, apk_url: str, callback_url: str, id: int, domain: string, file_name: string) -> str:
+    def start_background_hardening(self, apk_url: str, callback_url: str, id: int, domain: string, file_name: string,package_name_method: string,  package_name: Optional[str] = None) -> str:
         job_id = str(uuid.uuid4())
-        Thread(target=self.harden_and_notify, args=(job_id, apk_url, callback_url,id, domain, file_name), daemon=True).start()
+        Thread(target=self.harden_and_notify, args=(job_id, apk_url, callback_url,id, domain, file_name, package_name_method, package_name), daemon=True).start()
         return job_id

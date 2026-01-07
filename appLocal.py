@@ -18,7 +18,7 @@ app = Flask(__name__)
 socketio = SocketIO(
     app,
     async_mode='eventlet',
-    cors_allowed_origins=["https://xco.lol", "http://localhost:3000"],
+    cors_allowed_origins=["*"],
 )
 
 init_socketio(socketio)
@@ -48,7 +48,7 @@ apk_controller = APKController(processor)
 
 @app.route("/", methods=["GET"])
 def home():
-    return "404 not found - 1.1.7"
+    return "404 not found - 1.1.5"
 
 @app.route("/harden", methods=["POST"])
 def harden():
