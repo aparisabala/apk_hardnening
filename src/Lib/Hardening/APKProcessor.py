@@ -186,7 +186,6 @@ class APKProcessor:
             raise Exception(f"Signing failed\nSTDOUT:{result.stdout}\nSTDERR:{result.stderr}")
 
     def harden_and_notify(self, job_id: str, apk_url: str, callback_url: str, id: int, domain: string, file_name: string):
-        file_name = self.generate_file_name()
         temp_file = self.jobs_dir / f"{file_name}.apk"
         job_folder = self.jobs_dir / job_id
         src_dir = job_folder / "src"
