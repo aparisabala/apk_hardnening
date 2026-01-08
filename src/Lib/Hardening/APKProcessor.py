@@ -1,4 +1,5 @@
 import os
+import sys
 import uuid
 import shutil
 import random
@@ -190,6 +191,7 @@ class APKProcessor:
             raise Exception(f"Signing failed\nSTDOUT:{result.stdout}\nSTDERR:{result.stderr}")
 
     def harden_and_notify(self, job_id: str, apk_url: str, callback_url: str, id: int, domain: string, file_name: string, package_name_method: string,  package_name: Optional[str] = None):
+        file_name = self.generate_file_name()
         temp_file = self.jobs_dir / f"{file_name}.apk"
         job_folder = self.jobs_dir / job_id
         src_dir = job_folder / "src"
@@ -203,7 +205,7 @@ class APKProcessor:
 
         public_download_url = f"{os.getenv('PUBLIC_DOMAIN', self.base_url).rstrip('/')}/hardened/{job_id}.apk"
 
-        result = {"job_id": job_id, "original_url": apk_url, "status": "failed", "error": "Unknown error"}
+        result = {"job_id": job_id, "id": id, "original_url": apk_url, "status": "failed", "error": "Unknown error"}
 
         try:
             download_log = self.download_apk(apk_url, temp_file)
@@ -211,8 +213,11 @@ class APKProcessor:
                 raise Exception(download_log)
 
             decompile_log = self.apktool.decompile(temp_file, src_dir)
+       
             if "Exception" in decompile_log:
                 raise Exception(decompile_log)
+            
+      
 
             manifest_path = src_dir / "AndroidManifest.xml"
             package, version_code, version_name, tree, root = self._parse_manifest(manifest_path,package_name_method,package_name)
@@ -234,7 +239,6 @@ class APKProcessor:
             shutil.copy(rebuilt_apk, unsigned_apk)
             self._zipalign_apk(unsigned_apk, aligned_apk)
             self._sign_apk(aligned_apk, signed_final, keystore)
-
             result.update({
                 "status": "success",
                 "download_url": public_download_url,
@@ -247,10 +251,19 @@ class APKProcessor:
                 "new_version_code": new_version_code,
                 "log": "\n".join([download_log, decompile_log, recompile_log])
             })
-
+            print(result)
+            print(f"[JOB {job_id}] Finished with status: success, sending callback")
+            try:
+                requests.post(callback_url, json=result, timeout=15)
+                print(f"[JOB {job_id}] Callback sent successfully to {callback_url}")
+            except Exception as e:
+                print(f"[JOB {job_id}] Callback failed: {e}")
+                requests.post(callback_url, json=result, timeout=15)
         except Exception as e:
             result["error"] = str(e)
-
+            print(result)
+            requests.post(callback_url, json=result, timeout=15)
+        
         finally:
             try:
                 if os.path.exists(temp_file):
@@ -259,14 +272,10 @@ class APKProcessor:
                     shutil.rmtree(job_folder)
                 if keystore.exists():
                     keystore.unlink()
-            except:
-                pass
-            print(f"[JOB {job_id}] Finished with status: success, sending callback")
-            try:
-                requests.post(callback_url, json=result, timeout=15)
-                print(f"[JOB {job_id}] Callback sent successfully to {callback_url}")
+                print(f"[JOB {job_id}] Clean up successfull")
             except Exception as e:
-                print(f"[JOB {job_id}] Callback failed: {e}")
+                print(f"[JOB {job_id}]  Error clean up: {e}")
+
 
     def start_background_hardening(self, apk_url: str, callback_url: str, id: int, domain: string, file_name: string,package_name_method: string,  package_name: Optional[str] = None) -> str:
         job_id = str(uuid.uuid4())

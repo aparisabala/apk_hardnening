@@ -14,11 +14,12 @@ from src.Lib.Socket.emitter import init_socketio
 
 app = Flask(__name__)
 
+cors_origins = os.getenv("SOCKETIO_CORS_ORIGINS", "*").split(",")
 
 socketio = SocketIO(
     app,
     async_mode='eventlet',
-    cors_allowed_origins=["https://xco.lol", "http://localhost:3000"],
+    cors_allowed_origins=cors_origins,
 )
 
 init_socketio(socketio)
