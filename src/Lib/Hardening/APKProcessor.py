@@ -82,8 +82,9 @@ class APKProcessor:
     def _rename_package(self, src_dir: Path, old_package: str, new_package: str):
         old_path = old_package.replace('.', '/')
         new_path = new_package.replace('.', '/')
-        smali_dirs = [d for d in src_dir.iterdir() if d.is_dir() and d.name.startswith('smali')]
 
+        # 1. Move smali class directories (safe)
+        smali_dirs = [d for d in src_dir.iterdir() if d.is_dir() and d.name.startswith('smali')]
         for smali_dir in smali_dirs:
             old_dir = smali_dir / old_path
             if old_dir.exists():
@@ -91,22 +92,16 @@ class APKProcessor:
                 new_dir.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(old_dir), str(new_dir))
 
+            # 2. Only replace class references (Lold/path/ClassName;)
             for smali_file in smali_dir.rglob("*.smali"):
                 try:
                     content = smali_file.read_text(encoding="utf-8", errors="ignore")
-                    content = content.replace(f"L{old_path}/", f"L{new_path}/")
-                    smali_file.write_text(content, encoding="utf-8")
+                    # Safe: only replace L.../ style references
+                    if f"L{old_path}/" in content:
+                        content = content.replace(f"L{old_path}/", f"L{new_path}/")
+                        smali_file.write_text(content, encoding="utf-8")
                 except:
                     continue
-
-        for smali_file in src_dir.rglob("*.smali"):
-            try:
-                content = smali_file.read_text(encoding="utf-8", errors="ignore")
-                if old_package in content:
-                    content = content.replace(old_package, new_package)
-                    smali_file.write_text(content, encoding="utf-8")
-            except:
-                continue
 
     def _get_launcher_components(self, root):
         ns = {'android': 'http://schemas.android.com/apk/res/android'}
