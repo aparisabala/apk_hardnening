@@ -151,7 +151,6 @@ class APKProcessor:
         return "Unknown App"
     
     def _update_string_resource(self, src_dir: Path, res_name: str, new_value: str) -> bool:
-        pass
         strings_path = src_dir / "res" / "values" / "strings.xml"
         if not strings_path.exists():
             return False
@@ -272,7 +271,6 @@ class APKProcessor:
         return f"{base_url}/hardened/{job.file_name}.png"
 
     def _harden_manifest(self, job: Job, root, tree, manifest_path: Path, original_version_code: int, original_version_name: str) -> int:
-        pass
         application = root.find('application')
         if application:
             for attr in [
@@ -292,7 +290,6 @@ class APKProcessor:
         return new_version_code
 
     def _inject_protection_stub(self, src_dir: Path, package: str):
-        pass
         package_path = package.replace(".", "/")
         stub_path = src_dir / "smali" / package_path / "ProtectionLog.smali"
         stub_path.parent.mkdir(parents=True, exist_ok=True)
