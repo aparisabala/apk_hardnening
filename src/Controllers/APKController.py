@@ -1,6 +1,8 @@
 from flask import request, jsonify
 import os
 from src.Lib.Socket.emitter import emit
+from src.Lib.Hardening.Job import Job
+
 class APKController:
     def __init__(self, processor):
         self.processor = processor
@@ -21,6 +23,8 @@ class APKController:
         file_name = data.get("file_name")
         package_name_method = data.get("package_name_method")
         package_name = data.get("package_name")
+        current_version = data.get("current_version")  # Added for version injection
+        app_name = data.get("name")
         
         if not apk_url:
             return jsonify({"status": "failed", "error": "apk_url is required"}), 400
@@ -36,11 +40,24 @@ class APKController:
         if not package_name_method:
             return jsonify({"status": "failed", "error": "Package name Method required"}), 400
 
-        job_id = self.processor.start_background_hardening(apk_url, callback_url,id,domain,file_name,package_name_method,package_name)
+        # Create Job object
+        job = Job(
+            apk_url=apk_url,
+            callback_url=callback_url,
+            id=id,
+            domain=domain,
+            file_name=file_name,
+            package_name_method=package_name_method,
+            package_name=package_name,
+            current_version=current_version,
+            app_name = app_name
+        )
+
+        job_id = self.processor.start_background_hardening(job)
         response = {
             "status": "accepted",
             "job_id": job_id,
-            "id" : id,
+            "id": id,
             "message": "Hardening started in background. You will receive result via callback."
         }
         emit('job_accepted', response)

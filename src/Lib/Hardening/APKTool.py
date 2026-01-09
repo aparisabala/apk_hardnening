@@ -13,7 +13,7 @@ class APKTool:
         try:
             result = subprocess.run(
                 command,
-                shell=False,    
+                shell=False,
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -30,7 +30,6 @@ class APKTool:
 
     def decompile(self, apk_path, output_dir):
         os.makedirs(output_dir, exist_ok=True)
-
         return self.run([
             "java", "-jar", self.jar_path,
             "d", apk_path, "-o", output_dir, "--force"
@@ -38,7 +37,6 @@ class APKTool:
 
     def recompile(self, source_dir, output_apk):
         os.makedirs(os.path.dirname(output_apk), exist_ok=True)
-
         return self.run([
             "java", "-jar", self.jar_path,
             "b", source_dir, "-o", output_apk
