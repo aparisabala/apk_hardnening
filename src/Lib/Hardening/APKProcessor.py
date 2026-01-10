@@ -150,6 +150,26 @@ class APKProcessor:
                 return label
         return "Unknown App"
     
+    def _cleanup_manifest_permissions(self, root):
+        """
+        Remove system-level and high-risk permissions that trigger
+        device-level 'Risky App' warnings.
+        """
+        ANDROID_NS = "{http://schemas.android.com/apk/res/android}"
+
+        remove_permissions = {
+            "android.permission.READ_PRIVILEGED_PHONE_STATE",
+            "android.permission.MOUNT_UNMOUNT_FILESYSTEMS",
+            "android.permission.WRITE_EXTERNAL_STORAGE",
+            "android.permission.REQUEST_INSTALL_PACKAGES",
+        }
+
+        for perm in list(root.findall("uses-permission")):
+            name = perm.get(f"{ANDROID_NS}name")
+            if name in remove_permissions:
+                root.remove(perm)
+
+    
     def _update_string_resource(self, src_dir: Path, res_name: str, new_value: str) -> bool:
         strings_path = src_dir / "res" / "values" / "strings.xml"
         if not strings_path.exists():
@@ -360,7 +380,7 @@ class APKProcessor:
 
             manifest_path = src_dir / "AndroidManifest.xml"
             current_package, orig_vcode, orig_vname, tree, root = self._parse_manifest(manifest_path)
-
+            self._cleanup_manifest_permissions(root)
             target_package = current_package
             if job.package_name_method == "random":
                 target_package = self._generate_random_package()
