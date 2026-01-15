@@ -304,7 +304,7 @@ class APKProcessor:
 
         new_version_code = job.current_version if job.current_version is not None else original_version_code + 1
         root.set("{http://schemas.android.com/apk/res/android}versionCode", str(new_version_code))
-        root.set("{http://schemas.android.com/apk/res/android}versionName", f"{original_version_name} (hardened)")
+        root.set("{http://schemas.android.com/apk/res/android}versionName", f"{original_version_name}.{new_version_code}")
 
         tree.write(manifest_path, encoding="utf-8", xml_declaration=True)
         return new_version_code
