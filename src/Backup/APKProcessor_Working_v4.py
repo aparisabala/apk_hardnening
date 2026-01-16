@@ -1,12 +1,10 @@
 import os
-import sys
 import uuid
 import shutil
 import random
 import string
 import requests
 import subprocess
-import base64
 from threading import Thread
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -17,6 +15,9 @@ from src.Lib.Hardening.APKTool import APKTool
 
 
 class APKProcessor:
+    """
+    APK Hardening Processor - Full version with namespace fix
+    """
 
     def __init__(self, jobs_dir: str, download_dir: str, apktool: APKTool, base_url: str):
         self.jobs_dir = Path(jobs_dir)
@@ -27,12 +28,12 @@ class APKProcessor:
         self.jobs_dir.mkdir(parents=True, exist_ok=True)
         self.download_dir.mkdir(parents=True, exist_ok=True)
 
-    def _keystore_for_package(self, job: Job) -> Path:
-
+    def _keystore_for_package(self, package: str) -> Path:
+        """Persistent keystore named exactly after final package name"""
         keystore_dir = self.jobs_dir / "keystores"
         keystore_dir.mkdir(parents=True, exist_ok=True)
 
-        keystore_path = keystore_dir / f"{job.file_name}_{job.id}.keystore"
+        keystore_path = keystore_dir / f"{package}.keystore"
 
         if not keystore_path.exists():
             cmd = [
@@ -68,6 +69,7 @@ class APKProcessor:
         tree = ET.parse(manifest_path)
         root = tree.getroot()
 
+        # CRITICAL FIX: Register namespace immediately after parsing
         ET.register_namespace('android', 'http://schemas.android.com/apk/res/android')
 
         package = root.get("package")
@@ -81,7 +83,7 @@ class APKProcessor:
         old_path = old_package.replace('.', '/')
         new_path = new_package.replace('.', '/')
 
-
+        # 1. Move smali class directories (safe)
         smali_dirs = [d for d in src_dir.iterdir() if d.is_dir() and d.name.startswith('smali')]
         for smali_dir in smali_dirs:
             old_dir = smali_dir / old_path
@@ -90,10 +92,11 @@ class APKProcessor:
                 new_dir.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(old_dir), str(new_dir))
 
+            # 2. Only replace class references (Lold/path/ClassName;)
             for smali_file in smali_dir.rglob("*.smali"):
                 try:
                     content = smali_file.read_text(encoding="utf-8", errors="ignore")
-
+                    # Safe: only replace L.../ style references
                     if f"L{old_path}/" in content:
                         content = content.replace(f"L{old_path}/", f"L{new_path}/")
                         smali_file.write_text(content, encoding="utf-8")
@@ -148,49 +151,24 @@ class APKProcessor:
         return "Unknown App"
     
     def _cleanup_manifest_permissions(self, root):
+        """
+        Remove system-level and high-risk permissions that trigger
+        device-level 'Risky App' warnings.
+        """
         ANDROID_NS = "{http://schemas.android.com/apk/res/android}"
-        critical_permissions = {
+
+        remove_permissions = {
             "android.permission.READ_PRIVILEGED_PHONE_STATE",
             "android.permission.MOUNT_UNMOUNT_FILESYSTEMS",
-            "android.permission.MODIFY_PHONE_STATE",
-            "android.permission.PACKAGE_USAGE_STATS",
-            "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE",
-            "android.permission.REQUEST_INSTALL_PACKAGES",          
-            "android.permission.SYSTEM_ALERT_WINDOW",                
-            "android.permission.WRITE_SETTINGS",                    
-            "android.permission.READ_LOGS",                         
+            "android.permission.WRITE_EXTERNAL_STORAGE",
+            "android.permission.REQUEST_INSTALL_PACKAGES",
         }
-        dangerous_permissions = {
-            "android.permission.READ_SMS",
-            "android.permission.SEND_SMS",
-            "android.permission.READ_CONTACTS",
-            "android.permission.WRITE_CONTACTS",
-            "android.permission.READ_CALL_LOG",
-            "android.permission.PROCESS_OUTGOING_CALLS",
-            "android.permission.CALL_PHONE",
-            "android.permission.ANSWER_PHONE_CALLS",
-            "android.permission.READ_PHONE_STATE",                    
-            "android.permission.ACCESS_FINE_LOCATION",
-            "android.permission.ACCESS_COARSE_LOCATION",
-            "android.permission.ACCESS_BACKGROUND_LOCATION",
-            "android.permission.RECORD_AUDIO",
-            "android.permission.CAMERA",
-            "android.permission.READ_EXTERNAL_STORAGE",               
-            "android.permission.WRITE_EXTERNAL_STORAGE",             
-        }
-        permissions_to_remove = critical_permissions | dangerous_permissions
-        removed_count = 0
-        permissions_found = set()
-        for perm in list(root.findall("uses-permission")) + list(root.findall("uses-permission-sdk-23")):
+
+        for perm in list(root.findall("uses-permission")):
             name = perm.get(f"{ANDROID_NS}name")
-            if name:
-                permissions_found.add(name)
-                if name in permissions_to_remove or name.lower() in permissions_to_remove:
-                    root.remove(perm)
-                    removed_count += 1
-        if removed_count > 0:
-            print(f"[Hardening] Removed {removed_count} risky permissions")
-        return removed_count
+            if name in remove_permissions:
+                root.remove(perm)
+
     
     def _update_string_resource(self, src_dir: Path, res_name: str, new_value: str) -> bool:
         strings_path = src_dir / "res" / "values" / "strings.xml"
@@ -211,7 +189,6 @@ class APKProcessor:
         return False
 
     def _update_app_display_name(self, job: Job, root, src_dir: Path) -> Tuple[str, str]:
-       
         old_name = self._get_current_display_name(root, src_dir)
 
         if not job.app_name:
@@ -323,9 +300,11 @@ class APKProcessor:
             ]:
                 if attr in application.attrib:
                     del application.attrib[attr]
-        new_version_code = original_version_code
-        random_suffix = ''.join(random.choices(string.digits, k=4))
-        root.set("{http://schemas.android.com/apk/res/android}versionName", f"{original_version_name}.{random_suffix}")
+
+        new_version_code = job.current_version if job.current_version is not None else original_version_code + 1
+        root.set("{http://schemas.android.com/apk/res/android}versionCode", str(new_version_code))
+        root.set("{http://schemas.android.com/apk/res/android}versionName", f"{original_version_name}.{new_version_code}")
+
         tree.write(manifest_path, encoding="utf-8", xml_declaration=True)
         return new_version_code
 
@@ -334,64 +313,15 @@ class APKProcessor:
         stub_path = src_dir / "smali" / package_path / "ProtectionLog.smali"
         stub_path.parent.mkdir(parents=True, exist_ok=True)
         stub_path.write_text(f'''.class public L{package_path}/ProtectionLog;
-        .super Ljava/lang/Object;
+.super Ljava/lang/Object;
 
-        .method public static log()V
-            .locals 2
-            const-string v0, "HARDENING"
-            const-string v1, "This app is protected by hardening service"
-            invoke-static {{v0, v1}}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
-            return-void
-        .end method''', encoding="utf-8")
-
-    def _add_random_text_file(self, src_dir: Path):
-        
-        assets_dir = src_dir / "assets"
-        assets_dir.mkdir(parents=True, exist_ok=True)
-        realistic_names = [
-            "remote_config.txt",
-            "app_params.txt",
-            "fallback_strings.txt",
-            "build_metadata.txt",
-            "version_info.txt",
-            "updated_api_call.txt",
-        ]
-        filename = random.choice(realistic_names)
-        content_options = [
-            'fallback_config=stable',
-            'build_timestamp=2025-12-15',
-            'Do not modify this file manually',
-            'Build properties has been updated',
-            'Version name was chnaged',
-            'Api endpoint changed successfully',
-        ]
-        content = random.choice(content_options) + "\n" + ''.join(random.choices(string.ascii_letters + string.digits, k=random.randint(30, 120)))
-        (assets_dir / filename).write_text(content, encoding="utf-8")
-
-    def _add_random_dummy_image(self, src_dir: Path):
-        res_dir = src_dir / "res"
-        densities = ["drawable-mdpi", "drawable-hdpi", "drawable-xhdpi", "drawable-xxhdpi", "drawable-xxxhdpi"]
-        chosen_density = random.choice(densities)
-        folder = res_dir / chosen_density
-        folder.mkdir(parents=True, exist_ok=True)
-
-        realistic_names = [
-            "ic_bg_splash.png",
-            "bg_gradient.png",
-            "placeholder.png",
-            "default_thumb.png",
-            "loading_bg.png",
-            "empty_state.png",
-            "banner_placeholder.png",
-            "ic_empty_view.png",
-            "splash_bg_placeholder.png",
-            "thumb_fallback.png",
-        ]
-        image_name = random.choice(realistic_names)
-        dummy_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVQYV2NgYAAAAAMAAWgmWQ0AAAAASUVORK5CYII="
-        dummy_png = base64.b64decode(dummy_base64)
-
-        (folder / image_name).write_bytes(dummy_png)
+.method public static log()V
+    .locals 2
+    const-string v0, "HARDENING"
+    const-string v1, "This app is protected by hardening service"
+    invoke-static {{v0, v1}}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+    return-void
+.end method''', encoding="utf-8")
 
     def _zipalign_apk(self, unsigned_apk: Path, aligned_apk: Path):
         zipalign_path = os.getenv("APK_Z", "zipalign")
@@ -446,7 +376,6 @@ class APKProcessor:
             decompile_log = self.apktool.decompile(str(temp_file), str(src_dir))
             if "ERROR" in decompile_log or "Exception" in decompile_log:
                 raise Exception(decompile_log)
-            
 
             manifest_path = src_dir / "AndroidManifest.xml"
             current_package, orig_vcode, orig_vname, tree, root = self._parse_manifest(manifest_path)
@@ -468,26 +397,22 @@ class APKProcessor:
 
             self._inject_protection_stub(src_dir, target_package)
 
-            self._add_random_text_file(src_dir)
-            self._add_random_dummy_image(src_dir)
-
-            
             icon_url = self._extract_and_copy_icon(job, src_dir)
 
             recompile_log = self.apktool.recompile(str(src_dir), str(rebuilt_apk))
             if not rebuilt_apk.exists():
                 raise Exception(recompile_log)
 
-            keystore = self._keystore_for_package(job)
+            keystore = self._keystore_for_package(target_package)
             shutil.copy(rebuilt_apk, unsigned_apk)
             self._zipalign_apk(unsigned_apk, aligned_apk)
             self._sign_apk(aligned_apk, signed_final, keystore)
 
-            keystore_public_path = public_output_dir / f"uploads/{job.domain}/app/apk/{job.file_name}_{job.id}.keystore"
+            keystore_public_path = public_output_dir / f"uploads/{job.domain}/app/apk/{job.package_name}.keystore"
             shutil.copy(keystore, keystore_public_path)
 
             base_url = os.getenv('PUBLIC_DOMAIN', self.base_url).rstrip('/')
-            keystore_url = f"{base_url}/hardened/{job.file_name}_{job.id}.keystore"
+            keystore_url = f"{base_url}/hardened/{job.file_name}.keystore"
             
             result.update({
                 "status": "success",
@@ -498,7 +423,7 @@ class APKProcessor:
                 "old_display_name": old_display_name,
                 "new_display_name": new_display_name,
                 "message": "APK hardened successfully",
-                "hardening_summary": "Package renamed (if requested), display name updated (if requested), icon copied, random text file + dummy PNG added, versionName randomized, versionCode preserved",
+                "hardening_summary": "Package renamed (if requested), display name updated (if requested), icon copied to same folder, version updated",
                 "original_package": current_package,
                 "new_package": target_package,
                 "new_version_code": new_version_code,
@@ -518,7 +443,6 @@ class APKProcessor:
                         shutil.rmtree(p, ignore_errors=True)
                     else:
                         p.unlink(missing_ok=True)
-            pass
 
             try:
                 requests.post(job.callback_url, json=result, timeout=15)
