@@ -1,4 +1,5 @@
 import os
+import sys
 import uuid
 import shutil
 import random
@@ -6,7 +7,6 @@ import string
 import requests
 import subprocess
 import base64
-import time
 from threading import Thread
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -80,6 +80,7 @@ class APKProcessor:
     def _rename_package(self, src_dir: Path, old_package: str, new_package: str):
         old_path = old_package.replace('.', '/')
         new_path = new_package.replace('.', '/')
+
 
         smali_dirs = [d for d in src_dir.iterdir() if d.is_dir() and d.name.startswith('smali')]
         for smali_dir in smali_dirs:
@@ -179,11 +180,14 @@ class APKProcessor:
         }
         permissions_to_remove = critical_permissions | dangerous_permissions
         removed_count = 0
+        permissions_found = set()
         for perm in list(root.findall("uses-permission")) + list(root.findall("uses-permission-sdk-23")):
             name = perm.get(f"{ANDROID_NS}name")
-            if name and (name in permissions_to_remove or name.lower() in permissions_to_remove):
-                root.remove(perm)
-                removed_count += 1
+            if name:
+                permissions_found.add(name)
+                if name in permissions_to_remove or name.lower() in permissions_to_remove:
+                    root.remove(perm)
+                    removed_count += 1
         if removed_count > 0:
             print(f"[Hardening] Removed {removed_count} risky permissions")
         return removed_count
@@ -207,6 +211,7 @@ class APKProcessor:
         return False
 
     def _update_app_display_name(self, job: Job, root, src_dir: Path) -> Tuple[str, str]:
+       
         old_name = self._get_current_display_name(root, src_dir)
 
         if not job.app_name:
@@ -216,6 +221,7 @@ class APKProcessor:
 
         updated = False
 
+       
         for elem in self._get_launcher_components(root):
             label_attr = "{http://schemas.android.com/apk/res/android}label"
             current_label = elem.get(label_attr)
@@ -227,6 +233,7 @@ class APKProcessor:
                 else:
                     elem.set(label_attr, new_name)
                     updated = True
+
 
         application = root.find("application")
         if application is not None:
@@ -245,8 +252,9 @@ class APKProcessor:
         if launchers and not updated:
             launchers[0].set("{http://schemas.android.com/apk/res/android}label", new_name)
 
+
         values_dirs = list((src_dir / "res").glob("values*"))
-        for values_dir in values_dirs:
+        for values_dir in values_dir:
             strings_path = values_dir / "strings.xml"
             if strings_path.exists():
                 try:
@@ -337,6 +345,7 @@ class APKProcessor:
         .end method''', encoding="utf-8")
 
     def _add_random_text_file(self, src_dir: Path):
+        
         assets_dir = src_dir / "assets"
         assets_dir.mkdir(parents=True, exist_ok=True)
         realistic_names = [
@@ -420,8 +429,7 @@ class APKProcessor:
         final_apk_dir.mkdir(parents=True, exist_ok=True)
         
         final_apk_path = final_apk_dir / f"{job.file_name}.apk"
-
-        temp_apk_path = final_apk_dir / f"{job.file_name}_{uuid.uuid4().hex[:12]}.tmp"
+        temp_apk_path = final_apk_dir / f"{job.file_name}.apk.tmp"   # ← temporary file
 
         public_download_url = f"{os.getenv('PUBLIC_DOMAIN', self.base_url).rstrip('/')}/hardened/{job.job_id}.apk"
 
@@ -444,6 +452,7 @@ class APKProcessor:
             decompile_log = self.apktool.decompile(str(temp_file), str(src_dir))
             if "ERROR" in decompile_log or "Exception" in decompile_log:
                 raise Exception(decompile_log)
+            
 
             manifest_path = src_dir / "AndroidManifest.xml"
             current_package, orig_vcode, orig_vname, tree, root = self._parse_manifest(manifest_path)
@@ -468,6 +477,7 @@ class APKProcessor:
             self._add_random_text_file(src_dir)
             self._add_random_dummy_image(src_dir)
 
+            
             icon_url = self._extract_and_copy_icon(job, src_dir)
 
             recompile_log = self.apktool.recompile(str(src_dir), str(rebuilt_apk))
@@ -478,28 +488,11 @@ class APKProcessor:
             shutil.copy(rebuilt_apk, unsigned_apk)
             self._zipalign_apk(unsigned_apk, aligned_apk)
             
+            # Sign to temporary file first
             self._sign_apk(aligned_apk, temp_apk_path, keystore)
 
+            # Atomic rename (most filesystems make this operation atomic)
             temp_apk_path.replace(final_apk_path)
-
-            now = time.time() + random.randint(-1800, 1800)  
-            try:
-                os.utime(final_apk_path, (now, now))
-
-                icon_path = final_apk_dir / f"{job.file_name}.png"
-                if icon_path.exists():
-                    os.utime(icon_path, (now, now))
-                    
-                print(f"[JOB {job.job_id}] Final files timestamp updated")
-            except Exception as ts_err:
-                print(f"[JOB {job.job_id}] Timestamp update failed (non-critical): {ts_err}")
-
-            try:
-                for file in final_apk_dir.glob(f"{job.file_name}*.idsig"):
-                    file.unlink(missing_ok=True)
-                    print(f"[JOB {job.job_id}] Removed .idsig file: {file.name}")
-            except Exception as e:
-                print(f"[JOB {job.job_id}] Failed to remove .idsig: {e}")
 
             keystore_public_path = public_output_dir / f"uploads/{job.domain}/app/apk/{job.file_name}_{job.id}.keystore"
             shutil.copy(keystore, keystore_public_path)
@@ -516,7 +509,7 @@ class APKProcessor:
                 "old_display_name": old_display_name,
                 "new_display_name": new_display_name,
                 "message": "APK hardened successfully",
-                "hardening_summary": "Package renamed (if requested), display name updated (if requested), icon copied, random text file + dummy PNG added, versionName randomized, versionCode preserved, timestamp refreshed, .idsig removed",
+                "hardening_summary": "Package renamed (if requested), display name updated (if requested), icon copied, random text file + dummy PNG added, versionName randomized, versionCode preserved",
                 "original_package": current_package,
                 "new_package": target_package,
                 "new_version_code": new_version_code,
@@ -529,16 +522,21 @@ class APKProcessor:
             result["error"] = str(e)
             result["id"] = job.id
 
+            # Clean up possible leftover temp file on failure
+            if temp_apk_path.exists():
+                try:
+                    temp_apk_path.unlink()
+                except:
+                    pass
+
         finally:
-            for p in [temp_file, job_folder, temp_apk_path]:
+            for p in [temp_file, job_folder]:
                 if p and p.exists():
-                    try:
-                        if p.is_dir():
-                            shutil.rmtree(p, ignore_errors=True)
-                        else:
-                            p.unlink(missing_ok=True)
-                    except:
-                        pass
+                    if p.is_dir():
+                        shutil.rmtree(p, ignore_errors=True)
+                    else:
+                        p.unlink(missing_ok=True)
+            pass
 
             try:
                 requests.post(job.callback_url, json=result, timeout=15)
