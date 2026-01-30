@@ -7,7 +7,6 @@ import requests
 import subprocess
 import base64
 import time
-import yaml
 from threading import Thread
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -29,9 +28,12 @@ class APKProcessor:
         self.download_dir.mkdir(parents=True, exist_ok=True)
 
     def _keystore_for_package(self, job: Job) -> Path:
+
         keystore_dir = self.jobs_dir / "keystores"
         keystore_dir.mkdir(parents=True, exist_ok=True)
+
         keystore_path = keystore_dir / f"{job.file_name}_{job.id}.keystore"
+
         if not keystore_path.exists():
             cmd = [
                 "keytool", "-genkeypair", "-v",
@@ -47,6 +49,7 @@ class APKProcessor:
             result = subprocess.run(cmd, capture_output=True, text=True)
             if result.returncode != 0:
                 raise Exception(f"Keystore generation failed: {result.stderr}")
+
         return keystore_path
 
     def _generate_random_package(self) -> str:
@@ -59,9 +62,30 @@ class APKProcessor:
         if result.returncode != 0:
             raise Exception(f"Download failed: {result.stderr}")
 
+    def _parse_manifest(self, manifest_path: Path):
+        if not manifest_path.exists():
+            return None, 1, "1.0", None, None
+
+        tree = ET.parse(manifest_path)
+        root = tree.getroot()
+
+        ET.register_namespace(
+            'android', 'http://schemas.android.com/apk/res/android')
+
+        package = root.get("package")
+        version_code_str = root.get(
+            "{http://schemas.android.com/apk/res/android}versionCode", "1")
+        version_name = root.get(
+            "{http://schemas.android.com/apk/res/android}versionName", "1.0")
+        version_code = int(
+            version_code_str) if version_code_str.isdigit() else 1
+
+        return package, version_code, version_name, tree, root
+
     def _rename_package(self, src_dir: Path, old_package: str, new_package: str):
         old_path = old_package.replace('.', '/')
         new_path = new_package.replace('.', '/')
+
         smali_dirs = [d for d in src_dir.iterdir() if d.is_dir()
                       and d.name.startswith('smali')]
         for smali_dir in smali_dirs:
@@ -70,10 +94,12 @@ class APKProcessor:
                 new_dir = smali_dir / new_path
                 new_dir.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(old_dir), str(new_dir))
+
             for smali_file in smali_dir.rglob("*.smali"):
                 try:
                     content = smali_file.read_text(
                         encoding="utf-8", errors="ignore")
+
                     if f"L{old_path}/" in content:
                         content = content.replace(
                             f"L{old_path}/", f"L{new_path}/")
@@ -112,6 +138,7 @@ class APKProcessor:
                         except:
                             pass
                 return label
+
         application = root.find("application")
         if application is not None:
             label = application.get(
@@ -177,6 +204,7 @@ class APKProcessor:
         strings_path = src_dir / "res" / "values" / "strings.xml"
         if not strings_path.exists():
             return False
+
         try:
             tree = ET.parse(strings_path)
             updated = False
@@ -193,10 +221,14 @@ class APKProcessor:
 
     def _update_app_display_name(self, job: Job, root, src_dir: Path) -> Tuple[str, str]:
         old_name = self._get_current_display_name(root, src_dir)
+
         if not job.app_name:
             return old_name, old_name
+
         new_name = job.app_name.strip()
+
         updated = False
+
         for elem in self._get_launcher_components(root):
             label_attr = "{http://schemas.android.com/apk/res/android}label"
             current_label = elem.get(label_attr)
@@ -208,6 +240,7 @@ class APKProcessor:
                 else:
                     elem.set(label_attr, new_name)
                     updated = True
+
         application = root.find("application")
         if application is not None:
             label_attr = "{http://schemas.android.com/apk/res/android}label"
@@ -220,10 +253,12 @@ class APKProcessor:
                 else:
                     application.set(label_attr, new_name)
                     updated = True
+
         launchers = self._get_launcher_components(root)
         if launchers and not updated:
             launchers[0].set(
                 "{http://schemas.android.com/apk/res/android}label", new_name)
+
         values_dirs = list((src_dir / "res").glob("values*"))
         for values_dir in values_dirs:
             strings_path = values_dir / "strings.xml"
@@ -242,14 +277,17 @@ class APKProcessor:
                         updated = True
                 except:
                     pass
+
         return old_name, new_name
 
     def _extract_and_copy_icon(self, job: Job, src_dir: Path) -> Optional[str]:
         res_dir = src_dir / "res"
         if not res_dir.exists():
             return None
+
         density_order = ["xxxhdpi", "xxhdpi", "xhdpi", "hdpi", "mdpi"]
         possible_names = ["ic_launcher", "ic_launcher_round"]
+
         icon_source = None
         for density in density_order:
             for name in possible_names:
@@ -267,18 +305,22 @@ class APKProcessor:
                     break
             if icon_source:
                 break
+
         if not icon_source:
             return None
+
         public_output_dir = Path(
             os.getenv("HARDENED_APK_OUTPUT_DIR", self.download_dir))
         apk_folder = public_output_dir / f"uploads/{job.domain}/app/apk"
         apk_folder.mkdir(parents=True, exist_ok=True)
+
         icon_path = apk_folder / f"{job.file_name}.png"
         shutil.copy(icon_source, icon_path)
+
         base_url = os.getenv('PUBLIC_DOMAIN', self.base_url).rstrip('/')
         return f"{base_url}/hardened/{job.file_name}.png"
 
-    def _harden_manifest(self, job: Job, root, tree, manifest_path: Path, original_version_code: int, original_version_name: str) -> tuple[int, str, int, str]:
+    def _harden_manifest(self, job: Job, root, tree, manifest_path: Path, original_version_code: int, original_version_name: str) -> int:
         application = root.find('application')
         if application:
             for attr in [
@@ -289,32 +331,12 @@ class APKProcessor:
             ]:
                 if attr in application.attrib:
                     del application.attrib[attr]
-
-        # versionCode: append job.current_version digits if available
         new_version_code = original_version_code
-        if hasattr(job, "current_version") and job.current_version:
-            current_str = str(job.current_version).strip()
-            if current_str.isdigit() and current_str:
-                new_version_code = int(f"{original_version_code}")
-
-        # versionName: pad to at least 3 parts if short, then append .XXXX
-        base = (original_version_name or "1.0").strip()
         random_suffix = ''.join(random.choices(string.digits, k=4))
-        if '.' in base:
-            # Split at last dot and replace the part after it
-            prefix, _ = base.rsplit('.', 1)
-            new_version_name = f"{prefix}.{random_suffix}"
-        else:
-            # No dot → just add . + random
-            new_version_name = f"{base}.{random_suffix}"
-
-        ns = "{http://schemas.android.com/apk/res/android}"
-        root.set(ns + "versionCode", str(new_version_code))
-        root.set(ns + "versionName", new_version_name)
-
+        root.set("{http://schemas.android.com/apk/res/android}versionName",
+                 f"{original_version_name}.{random_suffix}")
         tree.write(manifest_path, encoding="utf-8", xml_declaration=True)
-
-        return new_version_code, new_version_name, original_version_code, original_version_name
+        return new_version_code
 
     def _inject_protection_stub(self, src_dir: Path, package: str):
         package_path = package.replace(".", "/")
@@ -322,6 +344,7 @@ class APKProcessor:
         stub_path.parent.mkdir(parents=True, exist_ok=True)
         stub_path.write_text(f'''.class public L{package_path}/ProtectionLog;
         .super Ljava/lang/Object;
+
         .method public static log()V
             .locals 2
             const-string v0, "HARDENING"
@@ -361,6 +384,7 @@ class APKProcessor:
         chosen_density = random.choice(densities)
         folder = res_dir / chosen_density
         folder.mkdir(parents=True, exist_ok=True)
+
         realistic_names = [
             "ic_bg_splash.png",
             "bg_gradient.png",
@@ -376,6 +400,7 @@ class APKProcessor:
         image_name = random.choice(realistic_names)
         dummy_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVQYV2NgYAAAAAMAAWgmWQ0AAAAASUVORK5CYII="
         dummy_png = base64.b64decode(dummy_base64)
+
         (folder / image_name).write_bytes(dummy_png)
 
     def _zipalign_apk(self, unsigned_apk: Path, aligned_apk: Path):
@@ -408,6 +433,7 @@ class APKProcessor:
         rebuilt_apk = job_folder / "rebuilt.apk"
         unsigned_apk = job_folder / "unsigned.apk"
         aligned_apk = job_folder / "aligned.apk"
+
         public_output_dir = Path(
             os.getenv("HARDENED_APK_OUTPUT_DIR", self.download_dir))
         public_output_dir.mkdir(parents=True, exist_ok=True)
@@ -416,8 +442,10 @@ class APKProcessor:
         final_apk_dir.mkdir(parents=True, exist_ok=True)
 
         final_apk_path = final_apk_dir / f"{job.file_name}.apk"
+
         temp_apk_path = final_apk_dir / \
             f"{job.file_name}_{uuid.uuid4().hex[:12]}.tmp"
+
         public_download_url = f"{os.getenv('PUBLIC_DOMAIN', self.base_url).rstrip('/')}/hardened/{job.job_id}.apk"
 
         result = {
@@ -428,15 +456,10 @@ class APKProcessor:
             "id": job.id,
             "icon_url": None,
             "old_display_name": "Unknown",
-            "new_display_name": "Unknown",
-            "old_version_code": None,
-            "new_version_code": None,
-            "old_version_name": None,
-            "new_version_name": None,
+            "new_display_name": "Unknown"
         }
 
         try:
-
             self._download_apk(job.apk_url, temp_file)
             if not temp_file.exists() or temp_file.stat().st_size == 0:
                 raise Exception("Downloaded APK is empty")
@@ -446,29 +469,10 @@ class APKProcessor:
             if "ERROR" in decompile_log or "Exception" in decompile_log:
                 raise Exception(decompile_log)
 
-            # Read version info from apktool.yml
-            yml_path = src_dir / "apktool.yml"
-            if not yml_path.exists():
-                raise Exception("apktool.yml not found after decompile")
-
-            with open(yml_path, 'r', encoding='utf-8') as f:
-                apktool_data = yaml.safe_load(f)
-
-            version_info = apktool_data.get('versionInfo', {})
-            orig_vcode = int(version_info.get('versionCode', 1))
-            orig_vname = str(version_info.get('versionName', '1.0')).strip()
-
-            current_package = apktool_data.get(
-                'renameManifestPackage') or apktool_data.get('package', 'unknown.package')
-
             manifest_path = src_dir / "AndroidManifest.xml"
-            tree = ET.parse(manifest_path)
-            root = tree.getroot()
-            ET.register_namespace(
-                'android', 'http://schemas.android.com/apk/res/android')
-
+            current_package, orig_vcode, orig_vname, tree, root = self._parse_manifest(
+                manifest_path)
             self._cleanup_manifest_permissions(root)
-
             target_package = current_package
             if job.package_name_method == "random":
                 target_package = self._generate_random_package()
@@ -484,11 +488,11 @@ class APKProcessor:
             old_display_name, new_display_name = self._update_app_display_name(
                 job, root, src_dir)
 
-            new_vcode, new_vname, old_vcode, old_vname = self._harden_manifest(
-                job, root, tree, manifest_path, orig_vcode, orig_vname
-            )
+            new_version_code = self._harden_manifest(
+                job, root, tree, manifest_path, orig_vcode, orig_vname)
 
             self._inject_protection_stub(src_dir, target_package)
+
             self._add_random_text_file(src_dir)
             self._add_random_dummy_image(src_dir)
 
@@ -504,14 +508,17 @@ class APKProcessor:
             self._zipalign_apk(unsigned_apk, aligned_apk)
 
             self._sign_apk(aligned_apk, temp_apk_path, keystore)
+
             temp_apk_path.replace(final_apk_path)
 
             now = time.time() + random.randint(-1800, 1800)
             try:
                 os.utime(final_apk_path, (now, now))
+
                 icon_path = final_apk_dir / f"{job.file_name}.png"
                 if icon_path.exists():
                     os.utime(icon_path, (now, now))
+
                 print(f"[JOB {job.job_id}] Final files timestamp updated")
             except Exception as ts_err:
                 print(
@@ -541,13 +548,10 @@ class APKProcessor:
                 "old_display_name": old_display_name,
                 "new_display_name": new_display_name,
                 "message": "APK hardened successfully",
-                "hardening_summary": "Package renamed (if requested), display name updated (if requested), icon copied, random text file + dummy PNG added, versionName padded + randomized suffix, versionCode appended current_version, timestamp refreshed, .idsig removed",
+                "hardening_summary": "Package renamed (if requested), display name updated (if requested), icon copied, random text file + dummy PNG added, versionName randomized, versionCode preserved, timestamp refreshed, .idsig removed",
                 "original_package": current_package,
                 "new_package": target_package,
-                "new_version_code": new_vcode,
-                "old_version_code": old_vcode,
-                "new_version_name": new_vname,
-                "old_version_name": orig_vname,
+                "new_version_code": new_version_code,
                 "icon_name": f"{job.file_name}",
                 "id": job.id,
                 "keystore_url": keystore_url,

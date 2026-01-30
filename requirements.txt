@@ -6,3 +6,4 @@ lxml
 flask-socketio
 python-socketio
 eventlet
+pyyaml
