@@ -327,276 +327,124 @@ class APKProcessor:
         .end method''', encoding="utf-8")
 
     def _inject_launch_reporter(self, src_dir: Path, package: str, job: Job):
-
-        report_url = job.op_call_back.strip()
-        apk_key = job.apk_key.strip() if job.apk_key and job.apk_key.strip(
-        ) else f"fallback-{job.id[:10]}"
-        print(f"[JOB {job.job_id}] Injecting launch reporter:")
-        print(f"  → URL: {report_url}")
-        print(f"  → Key: {apk_key}")
-
         package_path = package.replace(".", "/")
         cls_dir = src_dir / "smali" / package_path
         cls_dir.mkdir(parents=True, exist_ok=True)
 
+        report_url = "http://172.16.16.229/apkstall/public/api/site/landing/tack/launch"
+        apk_key = "hjg56d"   # change this if needed
+
+        # ────────────────────────────────
+        # File 1: LaunchReporter.smali
+        # ────────────────────────────────
         main_content = f""".class public L{package_path}/LaunchReporter;
-    .super Ljava/lang/Object;
+.super Ljava/lang/Object;
 
-    .field static final REPORT_URL:Ljava/lang/String; = "{report_url}"
+.field static final REPORT_URL:Ljava/lang/String; = "{report_url}"
 
-    .field static final APK_KEY:Ljava/lang/String; = "{apk_key}"
+.field static final APK_KEY:Ljava/lang/String; = "{apk_key}"
 
-    .method public static sendLaunch(Landroid/content/Context;)V
-        .locals 3
-        .param p0, "ctx"    # Landroid/content/Context;
+.method public static sendLaunch(Landroid/content/Context;)V
+    .locals 3
+    .param p0, "ctx"    # Landroid/content/Context;
 
-        :try_start
-            new-instance v0, Ljava/lang/Thread;
-            new-instance v1, L{package_path}/LaunchReporter$1;
-            invoke-direct {{v1, p0}}, L{package_path}/LaunchReporter$1;-><init>(Landroid/content/Context;)V
-            invoke-direct {{v0, v1}}, Ljava/lang/Thread;-><init>(Ljava/lang/Runnable;)V
-            invoke-virtual {{v0}}, Ljava/lang/Thread;->start()V
-        :try_end
-        .catch Ljava/lang/Exception; {{:try_start .. :try_end}} :catch_all
+    :try_start
+        new-instance v0, Ljava/lang/Thread;
+        new-instance v1, L{package_path}/LaunchReporter$1;
+        invoke-direct {{v1, p0}}, L{package_path}/LaunchReporter$1;-><init>(Landroid/content/Context;)V
+        invoke-direct {{v0, v1}}, Ljava/lang/Thread;-><init>(Ljava/lang/Runnable;)V
+        invoke-virtual {{v0}}, Ljava/lang/Thread;->start()V
+    :try_end
+    .catch Ljava/lang/Exception; {{:try_start .. :try_end}} :catch_all
 
-        return-void
+    return-void
 
-        :catch_all
-        move-exception v0
-        return-void
-    .end method
-    """.rstrip() + "\n"
+    :catch_all
+    move-exception v0
+    return-void
+.end method
+""".rstrip() + "\n"
 
+        # ────────────────────────────────
+        # File 2: LaunchReporter$1.smali
+        # ────────────────────────────────
         inner_content = f""".class L{package_path}/LaunchReporter$1;
-    .super Ljava/lang/Object;
-    .implements Ljava/lang/Runnable;
+.super Ljava/lang/Object;
+.implements Ljava/lang/Runnable;
 
-    .field final synthetic val$ctx:Landroid/content/Context;
+.field final synthetic val$ctx:Landroid/content/Context;
 
-    .method constructor <init>(Landroid/content/Context;)V
-        .locals 0
-        .param p1, "ctx"    # Landroid/content/Context;
+.method constructor <init>(Landroid/content/Context;)V
+    .locals 0
+    .param p1, "ctx"    # Landroid/content/Context;
 
-        iput-object p1, p0, L{package_path}/LaunchReporter$1;->val$ctx:Landroid/content/Context;
-        invoke-direct {{p0}}, Ljava/lang/Object;-><init>()V
-        return-void
-    .end method
+    iput-object p1, p0, L{package_path}/LaunchReporter$1;->val$ctx:Landroid/content/Context;
+    invoke-direct {{p0}}, Ljava/lang/Object;-><init>()V
+    return-void
+.end method
 
+.method public run()V
+    .locals 4
 
-    .method public run()V
-        .locals 7
+    :try_start
+        new-instance v0, Lorg/json/JSONObject;
+        invoke-direct {{v0}}, Lorg/json/JSONObject;-><init>()V
 
-        :try_start
-            # ────────────────────────────────
-            # Build fingerprint string (similar to JS version)
-            # ────────────────────────────────
+        const-string v1, "key"
+        sget-object v2, L{package_path}/LaunchReporter;->APK_KEY:Ljava/lang/String;
+        invoke-virtual {{v0, v1, v2}}, Lorg/json/JSONObject;->put(Ljava/lang/String;Ljava/lang/Object;)Lorg/json/JSONObject;
 
-            # 1. Rough user-agent: version + model
-            new-instance v0, Ljava/lang/StringBuilder;
-            invoke-direct {{v0}}, Ljava/lang/StringBuilder;-><init>()V
+        const-string v1, "event"
+        const-string v2, "app_launch"
+        invoke-virtual {{v0, v1, v2}}, Lorg/json/JSONObject;->put(Ljava/lang/String;Ljava/lang/Object;)Lorg/json/JSONObject;
 
-            sget-object v1, Landroid/os/Build$VERSION;->RELEASE:Ljava/lang/String;
-            invoke-virtual {{v0, v1}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+        new-instance v1, Ljava/net/URL;
+        sget-object v2, L{package_path}/LaunchReporter;->REPORT_URL:Ljava/lang/String;
+        invoke-direct {{v1, v2}}, Ljava/net/URL;-><init>(Ljava/lang/String;)V
 
-            const-string v1, " "
-            invoke-virtual {{v0, v1}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+        invoke-virtual {{v1}}, Ljava/net/URL;->openConnection()Ljava/net/URLConnection;
+        move-result-object v1
+        check-cast v1, Ljava/net/HttpURLConnection;
 
-            sget-object v1, Landroid/os/Build;->MODEL:Ljava/lang/String;
-            invoke-virtual {{v0, v1}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+        const/4 v2, 0x1
+        invoke-virtual {{v1, v2}}, Ljava/net/HttpURLConnection;->setDoOutput(Z)V
 
-            const-string v1, "|"
-            invoke-virtual {{v0, v1}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+        const-string v2, "POST"
+        invoke-virtual {{v1, v2}}, Ljava/net/HttpURLConnection;->setRequestMethod(Ljava/lang/String;)V
 
-            # 2. Language
-            invoke-static {{}}, Ljava/util/Locale;->getDefault()Ljava/util/Locale;
-            move-result-object v1
-            invoke-virtual {{v1}}, Ljava/util/Locale;->toLanguageTag()Ljava/lang/String;
-            move-result-object v1
-            invoke-virtual {{v0, v1}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+        const-string v2, "Content-Type"
+        const-string v3, "application/json; charset=utf-8"
+        invoke-virtual {{v1, v2, v3}}, Ljava/net/HttpURLConnection;->setRequestProperty(Ljava/lang/String;Ljava/lang/String;)V
 
-            const-string v1, "|"
-            invoke-virtual {{v0, v1}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+        invoke-virtual {{v0}}, Lorg/json/JSONObject;->toString()Ljava/lang/String;
+        move-result-object v0
 
-            # 3+4. Screen size
-            invoke-static {{}}, Landroid/content/res/Resources;->getSystem()Landroid/content/res/Resources;
-            move-result-object v1
-            invoke-virtual {{v1}}, Landroid/content/res/Resources;->getDisplayMetrics()Landroid/util/DisplayMetrics;
-            move-result-object v1
+        const-string v2, "UTF-8"
+        invoke-virtual {{v0, v2}}, Ljava/lang/String;->getBytes(Ljava/lang/String;)[B
+        move-result-object v0
 
-            iget v2, v1, Landroid/util/DisplayMetrics;->widthPixels:I
-            invoke-virtual {{v0, v2}}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
+        invoke-virtual {{v1}}, Ljava/net/HttpURLConnection;->getOutputStream()Ljava/io/OutputStream;
+        move-result-object v2
+        invoke-virtual {{v2, v0}}, Ljava/io/OutputStream;->write([B)V
+        invoke-virtual {{v2}}, Ljava/io/OutputStream;->flush()V
+        invoke-virtual {{v2}}, Ljava/io/OutputStream;->close()V
 
-            const-string v2, "x"
-            invoke-virtual {{v0, v2}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+        invoke-virtual {{v1}}, Ljava/net/HttpURLConnection;->getResponseCode()I
+        move-result v0
 
-            iget v1, v1, Landroid/util/DisplayMetrics;->heightPixels:I
-            invoke-virtual {{v0, v1}}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
+        invoke-virtual {{v1}}, Ljava/net/HttpURLConnection;->disconnect()V
 
-            const-string v1, "|"
-            invoke-virtual {{v0, v1}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    :try_end
+    .catch Ljava/lang/Exception; {{:try_start .. :try_end}} :catch_block
 
-            # 5. Timezone
-            invoke-static {{}}, Ljava/util/TimeZone;->getDefault()Ljava/util/TimeZone;
-            move-result-object v1
-            invoke-virtual {{v1}}, Ljava/util/TimeZone;->getID()Ljava/lang/String;
-            move-result-object v1
-            invoke-virtual {{v0, v1}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    return-void
 
-            invoke-virtual {{v0}}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
-            move-result-object v0
+    :catch_block
+    move-exception v0
+    return-void
+.end method
+""".rstrip() + "\n"
 
-            # ────────────────────────────────
-            # Try SHA-256 (preferred)
-            # ────────────────────────────────
-            const-string v1, "SHA-256"
-            invoke-static {{v1}}, Ljava/security/MessageDigest;->getInstance(Ljava/lang/String;)Ljava/security/MessageDigest;
-            move-result-object v1
-
-            const-string v2, "UTF-8"
-            invoke-virtual {{v0, v2}}, Ljava/lang/String;->getBytes(Ljava/lang/String;)[B
-            move-result-object v0
-
-            invoke-virtual {{v1, v0}}, Ljava/security/MessageDigest;->digest([B)[B
-            move-result-object v0
-
-            new-instance v1, Ljava/lang/StringBuilder;
-            invoke-direct {{v1}}, Ljava/lang/StringBuilder;-><init>()V
-
-            array-length v2, v0
-            const/4 v3, 0x0
-
-        :goto_0
-            if-ge v3, v2, :cond_sha256_done
-
-            aget-byte v4, v0, v3
-            and-int/lit16 v4, v4, 0xff
-            invoke-static {{v4}}, Ljava/lang/Integer;->toHexString(I)Ljava/lang/String;
-            move-result-object v4
-
-            invoke-virtual {{v4}}, Ljava/lang/String;->length()I
-            move-result v5
-            const/4 v6, 0x1
-
-            if-ne v5, v6, :cond_no_pad
-
-            const-string v5, "0"
-            invoke-virtual {{v1, v5}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-
-        :cond_no_pad
-            invoke-virtual {{v1, v4}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-
-            add-int/lit8 v3, v3, 0x1
-            goto :goto_0
-
-        :cond_sha256_done
-            invoke-virtual {{v1}}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
-            move-result-object v0
-            goto :cond_fingerprint_done
-
-        :catch_sha256
-            move-exception v1
-
-            # ────────────────────────────────
-            # Fallback: simple int hash (like JS version)
-            # ────────────────────────────────
-            const/4 v1, 0x0
-            const/4 v2, 0x0
-
-        :goto_1
-            invoke-virtual {{v0}}, Ljava/lang/String;->length()I
-            move-result v3
-            if-ge v1, v3, :cond_fallback_done
-
-            invoke-virtual {{v0, v1}}, Ljava/lang/String;->charAt(I)C
-            move-result v3
-
-            shl-int/lit8 v4, v2, 0x5
-            sub-int/2addr v4, v2
-            add-int v2, v4, v3
-            or-int/lit8 v2, v2, 0x0
-
-            add-int/lit8 v1, v1, 0x1
-            goto :goto_1
-
-        :cond_fallback_done
-            new-instance v0, Ljava/lang/StringBuilder;
-            const-string v1, "fp_"
-            invoke-direct {{v0, v1}}, Ljava/lang/StringBuilder;-><init>(Ljava/lang/String;)V
-            invoke-static {{v2}}, Ljava/lang/Math;->abs(I)I
-            move-result v1
-            invoke-virtual {{v0, v1}}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
-            invoke-virtual {{v0}}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
-            move-result-object v0
-
-        :cond_fingerprint_done
-            # ────────────────────────────────
-            # Now build JSON payload
-            # ────────────────────────────────
-            new-instance v1, Lorg/json/JSONObject;
-            invoke-direct {{v1}}, Lorg/json/JSONObject;-><init>()V
-
-            const-string v2, "key"
-            sget-object v3, L{package_path}/LaunchReporter;->APK_KEY:Ljava/lang/String;
-            invoke-virtual {{v1, v2, v3}}, Lorg/json/JSONObject;->put(Ljava/lang/String;Ljava/lang/Object;)Lorg/json/JSONObject;
-
-            const-string v2, "fingerprint"
-            invoke-virtual {{v1, v2, v0}}, Lorg/json/JSONObject;->put(Ljava/lang/String;Ljava/lang/Object;)Lorg/json/JSONObject;
-
-            const-string v2, "event"
-            const-string v3, "app_launch"
-            invoke-virtual {{v1, v2, v3}}, Lorg/json/JSONObject;->put(Ljava/lang/String;Ljava/lang/Object;)Lorg/json/JSONObject;
-
-            # ────────────────────────────────
-            # HTTP POST (same as before)
-            # ────────────────────────────────
-            new-instance v0, Ljava/net/URL;
-            sget-object v2, L{package_path}/LaunchReporter;->REPORT_URL:Ljava/lang/String;
-            invoke-direct {{v0, v2}}, Ljava/net/URL;-><init>(Ljava/lang/String;)V
-
-            invoke-virtual {{v0}}, Ljava/net/URL;->openConnection()Ljava/net/URLConnection;
-            move-result-object v0
-            check-cast v0, Ljava/net/HttpURLConnection;
-
-            const/4 v2, 0x1
-            invoke-virtual {{v0, v2}}, Ljava/net/HttpURLConnection;->setDoOutput(Z)V
-
-            const-string v2, "POST"
-            invoke-virtual {{v0, v2}}, Ljava/net/HttpURLConnection;->setRequestMethod(Ljava/lang/String;)V
-
-            const-string v2, "Content-Type"
-            const-string v3, "application/json; charset=utf-8"
-            invoke-virtual {{v0, v2, v3}}, Ljava/net/HttpURLConnection;->setRequestProperty(Ljava/lang/String;Ljava/lang/String;)V
-
-            invoke-virtual {{v1}}, Lorg/json/JSONObject;->toString()Ljava/lang/String;
-            move-result-object v1
-
-            const-string v2, "UTF-8"
-            invoke-virtual {{v1, v2}}, Ljava/lang/String;->getBytes(Ljava/lang/String;)[B
-            move-result-object v1
-
-            invoke-virtual {{v0}}, Ljava/net/HttpURLConnection;->getOutputStream()Ljava/io/OutputStream;
-            move-result-object v2
-            invoke-virtual {{v2, v1}}, Ljava/io/OutputStream;->write([B)V
-            invoke-virtual {{v2}}, Ljava/io/OutputStream;->flush()V
-            invoke-virtual {{v2}}, Ljava/io/OutputStream;->close()V
-
-            invoke-virtual {{v0}}, Ljava/net/HttpURLConnection;->getResponseCode()I
-            move-result v1
-
-            invoke-virtual {{v0}}, Ljava/net/HttpURLConnection;->disconnect()V
-
-        :try_end
-        .catch Ljava/lang/Exception; {{:try_start .. :try_end}} :catch_block
-
-        return-void
-
-        :catch_block
-        move-exception v0
-        return-void
-    .end method
-    """.rstrip() + "\n"
-
-        # Write two clean files
         (cls_dir / "LaunchReporter.smali").write_text(main_content, encoding="utf-8")
         (cls_dir / "LaunchReporter$1.smali").write_text(inner_content, encoding="utf-8")
 
@@ -824,17 +672,11 @@ class APKProcessor:
 
             self._inject_protection_stub(src_dir, target_package)
 
-            op_cb = job.op_call_back
-            apk_k = job.apk_key
-            if (
-                op_cb and isinstance(op_cb, str) and op_cb.strip() and
-                apk_k and isinstance(apk_k, str) and apk_k.strip()
-            ):
-                print(f"[JOB {job.job_id}] Enabling launch reporter with:")
-                print(f"  URL: {op_cb.strip()}")
-                print(f"  Key: {apk_k.strip()}")
-                self._inject_launch_reporter(src_dir, target_package, job)
-                self._hook_launcher_activities(src_dir, target_package)
+            # ────────────────────────────────────────────────
+            #             LAUNCH REPORTING INJECTION
+            # ────────────────────────────────────────────────
+            self._inject_launch_reporter(src_dir, target_package, job)
+            self._hook_launcher_activities(src_dir, target_package)
 
             self._add_random_text_file(src_dir)
             self._add_random_dummy_image(src_dir)

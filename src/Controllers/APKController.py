@@ -3,6 +3,7 @@ import os
 from src.Lib.Socket.emitter import emit
 from src.Lib.Hardening.Job import Job
 
+
 class APKController:
     def __init__(self, processor):
         self.processor = processor
@@ -23,9 +24,12 @@ class APKController:
         file_name = data.get("file_name")
         package_name_method = data.get("package_name_method")
         package_name = data.get("package_name")
-        current_version = data.get("current_version")  # Added for version injection
+        # Added for version injection
+        current_version = data.get("current_version")
         app_name = data.get("name")
-        
+        apk_key = data.get("apk_key")
+        op_call_back = data.get("op_call_back")
+
         if not apk_url:
             return jsonify({"status": "failed", "error": "apk_url is required"}), 400
         if not callback_url:
@@ -36,7 +40,7 @@ class APKController:
             return jsonify({"status": "failed", "error": "domain required"}), 400
         if not file_name:
             return jsonify({"status": "failed", "error": "File name required"}), 400
-        
+
         if not package_name_method:
             return jsonify({"status": "failed", "error": "Package name Method required"}), 400
 
@@ -50,7 +54,9 @@ class APKController:
             package_name_method=package_name_method,
             package_name=package_name,
             current_version=current_version,
-            app_name = app_name
+            app_name=app_name,
+            apk_key=apk_key,
+            op_call_back=op_call_back,
         )
 
         job_id = self.processor.start_background_hardening(job)
