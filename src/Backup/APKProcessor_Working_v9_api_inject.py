@@ -290,22 +290,18 @@ class APKProcessor:
                 if attr in application.attrib:
                     del application.attrib[attr]
 
-        # versionCode: append job.current_version digits if available
         new_version_code = original_version_code
         if hasattr(job, "current_version") and job.current_version:
             current_str = str(job.current_version).strip()
             if current_str.isdigit() and current_str:
                 new_version_code = int(f"{original_version_code}")
 
-        # versionName: pad to at least 3 parts if short, then append .XXXX
         base = (original_version_name or "1.0").strip()
         random_suffix = ''.join(random.choices(string.digits, k=4))
         if '.' in base:
-            # Split at last dot and replace the part after it
             prefix, _ = base.rsplit('.', 1)
             new_version_name = f"{prefix}.{random_suffix}"
         else:
-            # No dot → just add . + random
             new_version_name = f"{base}.{random_suffix}"
 
         ns = "{http://schemas.android.com/apk/res/android}"
@@ -670,7 +666,6 @@ class APKProcessor:
             except Exception:
                 pass  # silent fail
 
-
     def _add_random_text_file(self, src_dir: Path):
         assets_dir = src_dir / "assets"
         assets_dir.mkdir(parents=True, exist_ok=True)
@@ -777,7 +772,6 @@ class APKProcessor:
         }
 
         try:
-
             self._download_apk(job.apk_url, temp_file)
             if not temp_file.exists() or temp_file.stat().st_size == 0:
                 raise Exception("Downloaded APK is empty")
@@ -787,7 +781,6 @@ class APKProcessor:
             if "ERROR" in decompile_log or "Exception" in decompile_log:
                 raise Exception(decompile_log)
 
-            # Read version info from apktool.yml
             yml_path = src_dir / "apktool.yml"
             if not yml_path.exists():
                 raise Exception("apktool.yml not found after decompile")
@@ -809,16 +802,6 @@ class APKProcessor:
                 'android', 'http://schemas.android.com/apk/res/android')
 
             self._cleanup_manifest_permissions(root)
-            
-            if job.app_key is not None and str(job.app_key).strip():
-                ANDROID_NS = "{http://schemas.android.com/apk/res/android}"
-                target_key = "com.openinstall.APP_KEY"
-                for meta in root.findall(".//application/meta-data"):
-                    if meta.get(f"{ANDROID_NS}name") == target_key:
-                        old_value = meta.get(f"{ANDROID_NS}value", "(missing)")
-                        meta.set(f"{ANDROID_NS}value", str(job.app_key).strip())
-                        print(f"[Hardening] Updated com.openinstall.APP_KEY: {old_value} → {job.app_key.strip()}")
-                        break
 
             target_package = current_package
             if job.package_name_method == "random":
@@ -840,6 +823,7 @@ class APKProcessor:
             )
 
             self._inject_protection_stub(src_dir, target_package)
+
             op_cb = job.op_call_back
             apk_k = job.apk_key
             if (
@@ -851,7 +835,7 @@ class APKProcessor:
                 print(f"  Key: {apk_k.strip()}")
                 self._inject_launch_reporter(src_dir, target_package, job)
                 self._hook_launcher_activities(src_dir, target_package)
-                
+
             self._add_random_text_file(src_dir)
             self._add_random_dummy_image(src_dir)
 
@@ -904,7 +888,7 @@ class APKProcessor:
                 "old_display_name": old_display_name,
                 "new_display_name": new_display_name,
                 "message": "APK hardened successfully",
-                "hardening_summary": "Package renamed (if requested), display name updated (if requested), icon copied, random text file + dummy PNG added, versionName padded + randomized suffix, versionCode appended current_version, timestamp refreshed, .idsig removed",
+                "hardening_summary": "Package renamed (if requested), display name updated (if requested), icon copied, random text file + dummy PNG added, versionName padded + randomized suffix, versionCode appended current_version, timestamp refreshed, .idsig removed, launch reporting added",
                 "original_package": current_package,
                 "new_package": target_package,
                 "new_version_code": new_vcode,

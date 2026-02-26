@@ -20,6 +20,7 @@ class Job:
         package_name: Optional[str] = None,
         current_version: Optional[int] = None,
         app_name: Optional[str] = None,
+        app_key: Optional[str] = None,
         apk_key: Optional[str] = None,
         op_call_back: Optional[str] = None
     ):
@@ -33,5 +34,6 @@ class Job:
         self.package_name = package_name
         self.current_version = current_version
         self.app_name = app_name
+        self.app_key = app_key
         self.apk_key = apk_key
         self.op_call_back = op_call_back

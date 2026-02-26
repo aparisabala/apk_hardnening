@@ -27,6 +27,7 @@ class APKController:
         # Added for version injection
         current_version = data.get("current_version")
         app_name = data.get("name")
+        app_key = data.get("app_key")
         apk_key = data.get("apk_key")
         op_call_back = data.get("op_call_back")
 
@@ -55,6 +56,7 @@ class APKController:
             package_name=package_name,
             current_version=current_version,
             app_name=app_name,
+            app_key = app_key,
             apk_key=apk_key,
             op_call_back=op_call_back,
         )
