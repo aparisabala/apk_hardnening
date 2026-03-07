@@ -19,9 +19,9 @@ from src.Lib.Hardening.Job import Job
 from src.Lib.Hardening.APKTool import APKTool
 
 
-class APKProcessor:
+class APKProcessorTest:
 
-    def __init__(self, jobs_dir: str, download_dir: str, apktool: APKTool, base_url: str, max_workers: int = 3):
+    def __init__(self, jobs_dir: str, download_dir: str, apktool: APKTool, base_url: str, max_workers: int = 7):
         self.jobs_dir = Path(jobs_dir)
         self.download_dir = Path(download_dir)
         self.apktool = apktool
@@ -68,6 +68,7 @@ class APKProcessor:
         new_path = new_package.replace('.', '/')
         smali_dirs = [d for d in src_dir.iterdir() if d.is_dir() and d.name.startswith('smali')]
 
+        # Step 1: move the directory tree (fastest part)
         for smali_dir in smali_dirs:
             old_dir = smali_dir / old_path
             if old_dir.exists():
@@ -75,6 +76,7 @@ class APKProcessor:
                 new_dir.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(old_dir), str(new_dir))
 
+        # Step 2: only rewrite files that actually contain references
         pattern_old = f"L{old_path}/"
         pattern_new = f"L{new_path}/"
 

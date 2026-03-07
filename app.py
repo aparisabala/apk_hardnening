@@ -1,6 +1,7 @@
 from src.Lib.Socket.emitter import init_socketio
 from flask_socketio import SocketIO
 from src.Lib.Hardening.APKProcessor import APKProcessor
+from src.Lib.Hardening.APKProcessorTest import APKProcessorTest
 from src.Lib.Hardening.APKTool import APKTool
 from src.Controllers.APKController import APKController
 from flask import Flask, jsonify, request
@@ -31,7 +32,7 @@ BASE_URL = os.getenv("HARDENING_BASE_URL", "http://localhost:8000")
 DOWNLOAD_DIR = os.getenv("HARDENING_DOWNLOAD_DIR",
                          os.path.join(BASE_DIR, "downloads"))
 
-apktool_path = os.path.join(BASE_DIR, "apktool/Apktool/apktool_2.9.2.jar")
+apktool_path = os.path.join(BASE_DIR, "apktool/Apktool/apktool_2.12.1.jar")
 jobs_dir = os.path.join(BASE_DIR, "jobs")
 
 os.makedirs(jobs_dir, exist_ok=True)
@@ -46,7 +47,16 @@ processor = APKProcessor(
     base_url=BASE_URL
 )
 
+test_processor = APKProcessorTest(
+    jobs_dir=jobs_dir,
+    download_dir=DOWNLOAD_DIR,
+    apktool=apktool,
+    base_url=BASE_URL
+)
+
 apk_controller = APKController(processor)
+
+apk_test_controller = APKController(test_processor)
 
 
 @app.route("/", methods=["GET"])
@@ -57,6 +67,10 @@ def home():
 @app.route("/harden", methods=["POST"])
 def harden():
     return apk_controller.harden_background()
+
+@app.route("/test-harden", methods=["POST"])
+def test_harden():
+    return apk_test_controller.harden_background()
 
 
 @app.route("/job-completed", methods=["POST"])

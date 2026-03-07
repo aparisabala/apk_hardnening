@@ -1,43 +1,85 @@
 import subprocess
 import sys
 import os
+import time
+from pathlib import Path
+
 
 class APKTool:
-    def __init__(self, jar_path):
-        if sys.platform.startswith("win"):
-            self.jar_path = os.path.abspath(jar_path)
-        else:
-            self.jar_path = jar_path
 
-    def run(self, command):
+    def __init__(self, jar_path: str):
+        self.jar_path = os.path.abspath(jar_path) if sys.platform.startswith("win") else jar_path
+        if not os.path.isfile(self.jar_path):
+            raise FileNotFoundError(f"apktool.jar not found at: {self.jar_path}")
+        print(f"[APKTool] Initialized with jar: {self.jar_path}")
+
+    def _run_with_timing(self, cmd_list: list, operation_name: str, timeout_sec: int = 1800) -> str:
+        start_time = time.time()
+        cmd_short = " ".join(cmd_list[:6]) + (" ..." if len(cmd_list) > 6 else "")
         try:
             result = subprocess.run(
-                command,
+                cmd_list,
                 shell=False,
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                timeout=3600
+                timeout=timeout_sec,
+                encoding="utf-8",
+                errors="replace"
             )
-            output = result.stdout + result.stderr
+            duration = time.time() - start_time
+            output = (result.stdout or "").strip() + "\n" + (result.stderr or "").strip()
             if result.returncode != 0:
-                return f"ERROR (code {result.returncode}): {output}"
-            return output
+                msg = (
+                    f"[APKTool {operation_name} ERROR] "
+                    f"code={result.returncode} | time={duration:.2f}s\n"
+                    f"Command: {cmd_short}\n"
+                    f"Output:\n{output}"
+                )
+                print(msg)
+                return msg
+            success_msg = (
+                f"[APKTool {operation_name} SUCCESS] "
+                f"time taken = {duration:.2f} seconds\n"
+                f"Command: {cmd_short}"
+            )
+            print(success_msg)
+            return f"{success_msg}\n\n{output}"
+
         except subprocess.TimeoutExpired:
-            return "ERROR: Command timed out"
+            msg = f"[APKTool {operation_name} TIMEOUT] after {timeout_sec}s | {cmd_short}"
+            print(msg)
+            return msg
         except Exception as e:
-            return f"EXCEPTION: {str(e)}"
+            duration = time.time() - start_time
+            msg = f"[APKTool {operation_name} EXCEPTION] after {duration:.2f}s | {str(e)}"
+            print(msg)
+            return msg
+        
+    def decompile(self, apk_path: str, output_dir: str, timeout_sec: int = 1800) -> str:
 
-    def decompile(self, apk_path, output_dir):
+        apk_path = str(Path(apk_path).resolve())
+        output_dir = str(Path(output_dir).resolve())
         os.makedirs(output_dir, exist_ok=True)
-        return self.run([
+        cmd = [
             "java", "-jar", self.jar_path,
-            "d", apk_path, "-o", output_dir, "--force"
-        ])
+            "d", apk_path,
+            "-o", output_dir,
+            "--force"
+        ]
 
-    def recompile(self, source_dir, output_apk):
+        return self._run_with_timing(cmd, "DECOMPILE", timeout_sec)
+
+    def recompile(self, source_dir: str, output_apk: str, timeout_sec: int = 1800) -> str:
+
+        source_dir = str(Path(source_dir).resolve())
+        output_apk = str(Path(output_apk).resolve())
+
         os.makedirs(os.path.dirname(output_apk), exist_ok=True)
-        return self.run([
+
+        cmd = [
             "java", "-jar", self.jar_path,
-            "b", source_dir, "-o", output_apk
-        ])
+            "b", source_dir,
+            "-o", output_apk    
+        ]
+        return self._run_with_timing(cmd, "RECOMPILE", timeout_sec)

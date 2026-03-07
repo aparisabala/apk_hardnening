@@ -10,8 +10,6 @@ class APKController:
 
     def harden_background(self):
         data = request.get_json(silent=True) or {}
-
-        # API key security
         required_key = os.getenv("HARDENING_API_KEY")
         provided_key = data.get("api_key") or request.headers.get("X-API-Key")
         if required_key and provided_key != required_key:
@@ -24,7 +22,7 @@ class APKController:
         file_name = data.get("file_name")
         package_name_method = data.get("package_name_method")
         package_name = data.get("package_name")
-        # Added for version injection
+
         current_version = data.get("current_version")
         app_name = data.get("name")
         app_key = data.get("app_key")
