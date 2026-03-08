@@ -61,7 +61,7 @@ apk_test_controller = APKController(test_processor)
 
 @app.route("/", methods=["GET"])
 def home():
-    return "404 not found - 1.1.17"
+    return "404 not found - 1.1.18"
 
 
 @app.route("/harden", methods=["POST"])
