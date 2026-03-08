@@ -16,6 +16,12 @@ class APKTool:
     def _run_with_timing(self, cmd_list: list, operation_name: str, timeout_sec: int = 1800) -> str:
         start_time = time.time()
         cmd_short = " ".join(cmd_list[:6]) + (" ..." if len(cmd_list) > 6 else "")
+        env = os.environ.copy()
+        if os.environ.get("SERVER_TYPE") == "SERVER":
+            env["TMPDIR"] = "/home/pco/apk_tmp"
+            env["TMP"] = "/home/pco/apk_tmp"
+            env["TEMP"] = "/home/pco/apk_tmp"
+            env["_JAVA_OPTIONS"] = "-Djava.io.tmpdir=/home/pco/apk_tmp"
         try:
             result = subprocess.run(
                 cmd_list,
