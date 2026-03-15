@@ -79,7 +79,7 @@ class APKTool:
         source_dir = str(Path(source_dir).resolve())
         output_apk = str(Path(output_apk).resolve())
         os.makedirs(os.path.dirname(output_apk), exist_ok=True)
-        cmd = ["java", "-jar", self.jar_path, "b", source_dir, "-o", output_apk]
+        cmd = ["java", "-jar", self.jar_path, "b", source_dir, "-o", output_apk, "--force"]
         return self._run_with_timing(cmd, "RECOMPILE", job_id, timeout_sec)
 
     def zipalign_apk(self, input_apk: str, output_apk: str, job_id: str = "default_job") -> str:

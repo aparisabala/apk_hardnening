@@ -8,15 +8,27 @@ import subprocess
 import base64
 import time
 import yaml
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Thread
 from pathlib import Path
 import xml.etree.ElementTree as ET
 from typing import Optional, Tuple
 from ftplib import FTP
-
 from src.Lib.Hardening.Job import Job
 from src.Lib.Hardening.APKTool import APKTool
+
+
+def timer_step(name):
+    """Decorator to measure time of a function step"""
+    def decorator(func):
+        def wrapper(self, *args, **kwargs):
+            start = time.perf_counter()
+            result = func(self, *args, **kwargs)
+            duration = time.perf_counter() - start
+            print(f"[TIMER] {name}: {duration:.3f}s")
+            return result, duration
+        return wrapper
+    return decorator
 
 
 class APKProcessor:
@@ -31,7 +43,8 @@ class APKProcessor:
         self.jobs_dir.mkdir(parents=True, exist_ok=True)
         self.download_dir.mkdir(parents=True, exist_ok=True)
 
-        self.executor = ThreadPoolExecutor(max_workers=self.max_workers, thread_name_prefix="APKHardener")
+        self.executor = ThreadPoolExecutor(
+            max_workers=self.max_workers, thread_name_prefix="APKHardener")
 
     def _keystore_for_package(self, job: Job) -> Path:
         keystore_dir = self.jobs_dir / "keystores"
@@ -58,42 +71,59 @@ class APKProcessor:
         return f"com.{''.join(random.choices(string.ascii_lowercase, k=3))}.{''.join(random.choices(string.ascii_lowercase + string.digits, k=10))}"
 
     def _download_apk(self, url: str, save_path: Path):
-        cmd = ["curl", "-L", "--fail", "--connect-timeout", "30", "--silent", url, "-o", str(save_path)]
+        cmd = ["curl", "-L", "--fail", "--connect-timeout",
+               "30", "--silent", url, "-o", str(save_path)]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             raise Exception(f"Download failed: {result.stderr}")
 
     def _rename_package(self, src_dir: Path, old_package: str, new_package: str):
+        if old_package == new_package:
+            return
         old_path = old_package.replace('.', '/')
         new_path = new_package.replace('.', '/')
         smali_dirs = [d for d in src_dir.iterdir() if d.is_dir() and d.name.startswith('smali')]
-
+        moved = False
         for smali_dir in smali_dirs:
             old_dir = smali_dir / old_path
             if old_dir.exists():
                 new_dir = smali_dir / new_path
                 new_dir.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(old_dir), str(new_dir))
-
-        pattern_old = f"L{old_path}/"
-        pattern_new = f"L{new_path}/"
-
-        for smali_file in src_dir.rglob("*.smali"):
-            try:
-                content = smali_file.read_text(encoding="utf-8", errors="ignore")
-                if pattern_old in content:
-                    content = content.replace(pattern_old, pattern_new)
-                    smali_file.write_text(content, encoding="utf-8")
-            except Exception:
-                continue
+                moved = True
+        yml_path = src_dir / "apktool.yml"
+        if not yml_path.exists():
+            print("[rename_package] Warning: apktool.yml not found — skipping yml update")
+            return
+        try:
+            with open(yml_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            with open(yml_path, 'w', encoding='utf-8') as f:
+                updated = False
+                for line in lines:
+                    stripped = line.strip()
+                    if stripped.startswith('renameManifestPackage:') or stripped.startswith('rename-manifest-package:'):
+                        f.write(f"renameManifestPackage: {new_package}\n")
+                        updated = True
+                    else:
+                        f.write(line)
+                if not updated:
+                    f.write(f"\nrenameManifestPackage: {new_package}\n")
+            print(f"[rename_package] Updated apktool.yml → renameManifestPackage: {new_package}")
+            if moved:
+                print(f"[rename_package] Moved smali/{old_path} → smali/{new_path}")
+        except Exception as e:
+            print(f"[rename_package] Failed to update apktool.yml: {e}")
 
     def _get_launcher_components(self, root):
         ns = {'android': 'http://schemas.android.com/apk/res/android'}
         launchers = []
         for elem in root.findall(".//activity") + root.findall(".//activity-alias"):
             for intent in elem.findall(".//intent-filter"):
-                action = intent.find("action[@android:name='android.intent.action.MAIN']", ns)
-                category = intent.find("category[@android:name='android.intent.category.LAUNCHER']", ns)
+                action = intent.find(
+                    "action[@android:name='android.intent.action.MAIN']", ns)
+                category = intent.find(
+                    "category[@android:name='android.intent.category.LAUNCHER']", ns)
                 if action is not None and category is not None:
                     launchers.append(elem)
         return launchers
@@ -101,7 +131,8 @@ class APKProcessor:
     def _get_current_display_name(self, root, src_dir: Path) -> str:
         launchers = self._get_launcher_components(root)
         if launchers:
-            label = launchers[0].get("{http://schemas.android.com/apk/res/android}label")
+            label = launchers[0].get(
+                "{http://schemas.android.com/apk/res/android}label")
             if label:
                 if label.startswith("@string/"):
                     res_name = label.split("/")[-1]
@@ -117,7 +148,8 @@ class APKProcessor:
                 return label
         application = root.find("application")
         if application is not None:
-            label = application.get("{http://schemas.android.com/apk/res/android}label")
+            label = application.get(
+                "{http://schemas.android.com/apk/res/android}label")
             if label:
                 if label.startswith("@string/"):
                     res_name = label.split("/")[-1]
@@ -186,7 +218,8 @@ class APKProcessor:
                 elem.text = new_value
                 updated = True
             if updated:
-                tree.write(strings_path, encoding="utf-8", xml_declaration=True)
+                tree.write(strings_path, encoding="utf-8",
+                           xml_declaration=True)
                 return True
         except:
             pass
@@ -223,7 +256,8 @@ class APKProcessor:
                     updated = True
         launchers = self._get_launcher_components(root)
         if launchers and not updated:
-            launchers[0].set("{http://schemas.android.com/apk/res/android}label", new_name)
+            launchers[0].set(
+                "{http://schemas.android.com/apk/res/android}label", new_name)
         values_dirs = list((src_dir / "res").glob("values*"))
         for values_dir in values_dirs:
             strings_path = values_dir / "strings.xml"
@@ -237,7 +271,8 @@ class APKProcessor:
                             elem.text = new_name
                             changed = True
                     if changed:
-                        tree.write(strings_path, encoding="utf-8", xml_declaration=True)
+                        tree.write(strings_path, encoding="utf-8",
+                                   xml_declaration=True)
                         updated = True
                 except:
                     pass
@@ -260,12 +295,16 @@ class APKProcessor:
                             if candidate.exists():
                                 icon_source = candidate
                                 break
-                    if icon_source: break
-                if icon_source: break
-            if icon_source: break
+                    if icon_source:
+                        break
+                if icon_source:
+                    break
+            if icon_source:
+                break
         if not icon_source:
             return None
-        public_output_dir = Path(os.getenv("HARDENED_APK_OUTPUT_DIR", self.download_dir))
+        public_output_dir = Path(
+            os.getenv("HARDENED_APK_OUTPUT_DIR", self.download_dir))
         apk_folder = public_output_dir / f"uploads/{job.domain}/app/apk"
         apk_folder.mkdir(parents=True, exist_ok=True)
         icon_path = apk_folder / f"{job.file_name}.png"
@@ -288,7 +327,8 @@ class APKProcessor:
         if hasattr(job, "current_version") and job.current_version:
             current_str = str(job.current_version).strip()
             if current_str.isdigit():
-                new_version_code = int(current_str)  # ← corrected logic (was broken)
+                # ← corrected logic (was broken)
+                new_version_code = int(current_str)
 
         base = (original_version_name or "1.0").strip()
         random_suffix = ''.join(random.choices(string.digits, k=4))
@@ -311,18 +351,19 @@ class APKProcessor:
         stub_path = src_dir / "smali" / package_path / "ProtectionLog.smali"
         stub_path.parent.mkdir(parents=True, exist_ok=True)
         stub_path.write_text(f'''.class public L{package_path}/ProtectionLog;
-.super Ljava/lang/Object;
-.method public static log()V
-    .locals 2
-    const-string v0, "HARDENING"
-    const-string v1, "This app is protected by hardening service"
-    invoke-static {{v0, v1}}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
-    return-void
-.end method''', encoding="utf-8")
+        .super Ljava/lang/Object;
+        .method public static log()V
+            .locals 2
+            const-string v0, "HARDENING"
+            const-string v1, "This app is protected by hardening service"
+            invoke-static {{v0, v1}}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+            return-void
+        .end method''', encoding="utf-8")
 
     def _inject_launch_reporter(self, src_dir: Path, package: str, job: Job):
         report_url = job.op_call_back.strip()
-        apk_key = job.apk_key.strip() if job.apk_key and job.apk_key.strip() else f"fallback-{job.id[:10]}"
+        apk_key = job.apk_key.strip() if job.apk_key and job.apk_key.strip(
+        ) else f"fallback-{job.id[:10]}"
         print(f"[JOB {job.job_id}] Injecting launch reporter:")
         print(f"  → URL: {report_url}")
         print(f"  → Key: {apk_key}")
@@ -332,240 +373,240 @@ class APKProcessor:
         cls_dir.mkdir(parents=True, exist_ok=True)
 
         main_content = f""".class public L{package_path}/LaunchReporter;
-.super Ljava/lang/Object;
+            .super Ljava/lang/Object;
 
-.field static final REPORT_URL:Ljava/lang/String; = "{report_url}"
+            .field static final REPORT_URL:Ljava/lang/String; = "{report_url}"
 
-.field static final APK_KEY:Ljava/lang/String; = "{apk_key}"
+            .field static final APK_KEY:Ljava/lang/String; = "{apk_key}"
 
-.method public static sendLaunch(Landroid/content/Context;)V
-    .locals 3
-    .param p0, "ctx"    # Landroid/content/Context;
+            .method public static sendLaunch(Landroid/content/Context;)V
+                .locals 3
+                .param p0, "ctx"    # Landroid/content/Context;
 
-    :try_start
-        new-instance v0, Ljava/lang/Thread;
-        new-instance v1, L{package_path}/LaunchReporter$1;
-        invoke-direct {{v1, p0}}, L{package_path}/LaunchReporter$1;-><init>(Landroid/content/Context;)V
-        invoke-direct {{v0, v1}}, Ljava/lang/Thread;-><init>(Ljava/lang/Runnable;)V
-        invoke-virtual {{v0}}, Ljava/lang/Thread;->start()V
-    :try_end
-    .catch Ljava/lang/Exception; {{:try_start .. :try_end}} :catch_all
+                :try_start
+                    new-instance v0, Ljava/lang/Thread;
+                    new-instance v1, L{package_path}/LaunchReporter$1;
+                    invoke-direct {{v1, p0}}, L{package_path}/LaunchReporter$1;-><init>(Landroid/content/Context;)V
+                    invoke-direct {{v0, v1}}, Ljava/lang/Thread;-><init>(Ljava/lang/Runnable;)V
+                    invoke-virtual {{v0}}, Ljava/lang/Thread;->start()V
+                :try_end
+                .catch Ljava/lang/Exception; {{:try_start .. :try_end}} :catch_all
 
-    return-void
+                return-void
 
-    :catch_all
-    move-exception v0
-    return-void
-.end method
-""".rstrip() + "\n"
+                :catch_all
+                move-exception v0
+                return-void
+            .end method
+            """.rstrip() + "\n"
 
         inner_content = f""".class L{package_path}/LaunchReporter$1;
-.super Ljava/lang/Object;
-.implements Ljava/lang/Runnable;
+            .super Ljava/lang/Object;
+            .implements Ljava/lang/Runnable;
 
-.field final synthetic val$ctx:Landroid/content/Context;
+            .field final synthetic val$ctx:Landroid/content/Context;
 
-.method constructor <init>(Landroid/content/Context;)V
-    .locals 0
-    .param p1, "ctx"    # Landroid/content/Context;
+            .method constructor <init>(Landroid/content/Context;)V
+                .locals 0
+                .param p1, "ctx"    # Landroid/content/Context;
 
-    iput-object p1, p0, L{package_path}/LaunchReporter$1;->val$ctx:Landroid/content/Context;
-    invoke-direct {{p0}}, Ljava/lang/Object;-><init>()V
-    return-void
-.end method
+                iput-object p1, p0, L{package_path}/LaunchReporter$1;->val$ctx:Landroid/content/Context;
+                invoke-direct {{p0}}, Ljava/lang/Object;-><init>()V
+                return-void
+            .end method
 
-.method public run()V
-    .locals 7
+            .method public run()V
+                .locals 7
 
-    :try_start
-        new-instance v0, Ljava/lang/StringBuilder;
-        invoke-direct {{v0}}, Ljava/lang/StringBuilder;-><init>()V
+                :try_start
+                    new-instance v0, Ljava/lang/StringBuilder;
+                    invoke-direct {{v0}}, Ljava/lang/StringBuilder;-><init>()V
 
-        sget-object v1, Landroid/os/Build$VERSION;->RELEASE:Ljava/lang/String;
-        invoke-virtual {{v0, v1}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+                    sget-object v1, Landroid/os/Build$VERSION;->RELEASE:Ljava/lang/String;
+                    invoke-virtual {{v0, v1}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
 
-        const-string v1, " "
-        invoke-virtual {{v0, v1}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+                    const-string v1, " "
+                    invoke-virtual {{v0, v1}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
 
-        sget-object v1, Landroid/os/Build;->MODEL:Ljava/lang/String;
-        invoke-virtual {{v0, v1}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+                    sget-object v1, Landroid/os/Build;->MODEL:Ljava/lang/String;
+                    invoke-virtual {{v0, v1}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
 
-        const-string v1, "|"
-        invoke-virtual {{v0, v1}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+                    const-string v1, "|"
+                    invoke-virtual {{v0, v1}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
 
-        invoke-static {{}}, Ljava/util/Locale;->getDefault()Ljava/util/Locale;
-        move-result-object v1
-        invoke-virtual {{v1}}, Ljava/util/Locale;->toLanguageTag()Ljava/lang/String;
-        move-result-object v1
-        invoke-virtual {{v0, v1}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+                    invoke-static {{}}, Ljava/util/Locale;->getDefault()Ljava/util/Locale;
+                    move-result-object v1
+                    invoke-virtual {{v1}}, Ljava/util/Locale;->toLanguageTag()Ljava/lang/String;
+                    move-result-object v1
+                    invoke-virtual {{v0, v1}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
 
-        const-string v1, "|"
-        invoke-virtual {{v0, v1}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+                    const-string v1, "|"
+                    invoke-virtual {{v0, v1}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
 
-        invoke-static {{}}, Landroid/content/res/Resources;->getSystem()Landroid/content/res/Resources;
-        move-result-object v1
-        invoke-virtual {{v1}}, Landroid/content/res/Resources;->getDisplayMetrics()Landroid/util/DisplayMetrics;
-        move-result-object v1
+                    invoke-static {{}}, Landroid/content/res/Resources;->getSystem()Landroid/content/res/Resources;
+                    move-result-object v1
+                    invoke-virtual {{v1}}, Landroid/content/res/Resources;->getDisplayMetrics()Landroid/util/DisplayMetrics;
+                    move-result-object v1
 
-        iget v2, v1, Landroid/util/DisplayMetrics;->widthPixels:I
-        invoke-virtual {{v0, v2}}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
+                    iget v2, v1, Landroid/util/DisplayMetrics;->widthPixels:I
+                    invoke-virtual {{v0, v2}}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
 
-        const-string v2, "x"
-        invoke-virtual {{v0, v2}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+                    const-string v2, "x"
+                    invoke-virtual {{v0, v2}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
 
-        iget v1, v1, Landroid/util/DisplayMetrics;->heightPixels:I
-        invoke-virtual {{v0, v1}}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
+                    iget v1, v1, Landroid/util/DisplayMetrics;->heightPixels:I
+                    invoke-virtual {{v0, v1}}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
 
-        const-string v1, "|"
-        invoke-virtual {{v0, v1}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+                    const-string v1, "|"
+                    invoke-virtual {{v0, v1}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
 
-        invoke-static {{}}, Ljava/util/TimeZone;->getDefault()Ljava/util/TimeZone;
-        move-result-object v1
-        invoke-virtual {{v1}}, Ljava/util/TimeZone;->getID()Ljava/lang/String;
-        move-result-object v1
-        invoke-virtual {{v0, v1}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+                    invoke-static {{}}, Ljava/util/TimeZone;->getDefault()Ljava/util/TimeZone;
+                    move-result-object v1
+                    invoke-virtual {{v1}}, Ljava/util/TimeZone;->getID()Ljava/lang/String;
+                    move-result-object v1
+                    invoke-virtual {{v0, v1}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
 
-        invoke-virtual {{v0}}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
-        move-result-object v0
+                    invoke-virtual {{v0}}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
+                    move-result-object v0
 
-        const-string v1, "SHA-256"
-        invoke-static {{v1}}, Ljava/security/MessageDigest;->getInstance(Ljava/lang/String;)Ljava/security/MessageDigest;
-        move-result-object v1
+                    const-string v1, "SHA-256"
+                    invoke-static {{v1}}, Ljava/security/MessageDigest;->getInstance(Ljava/lang/String;)Ljava/security/MessageDigest;
+                    move-result-object v1
 
-        const-string v2, "UTF-8"
-        invoke-virtual {{v0, v2}}, Ljava/lang/String;->getBytes(Ljava/lang/String;)[B
-        move-result-object v0
+                    const-string v2, "UTF-8"
+                    invoke-virtual {{v0, v2}}, Ljava/lang/String;->getBytes(Ljava/lang/String;)[B
+                    move-result-object v0
 
-        invoke-virtual {{v1, v0}}, Ljava/security/MessageDigest;->digest([B)[B
-        move-result-object v0
+                    invoke-virtual {{v1, v0}}, Ljava/security/MessageDigest;->digest([B)[B
+                    move-result-object v0
 
-        new-instance v1, Ljava/lang/StringBuilder;
-        invoke-direct {{v1}}, Ljava/lang/StringBuilder;-><init>()V
+                    new-instance v1, Ljava/lang/StringBuilder;
+                    invoke-direct {{v1}}, Ljava/lang/StringBuilder;-><init>()V
 
-        array-length v2, v0
-        const/4 v3, 0x0
+                    array-length v2, v0
+                    const/4 v3, 0x0
 
-    :goto_0
-        if-ge v3, v2, :cond_sha256_done
+                :goto_0
+                    if-ge v3, v2, :cond_sha256_done
 
-        aget-byte v4, v0, v3
-        and-int/lit16 v4, v4, 0xff
-        invoke-static {{v4}}, Ljava/lang/Integer;->toHexString(I)Ljava/lang/String;
-        move-result-object v4
+                    aget-byte v4, v0, v3
+                    and-int/lit16 v4, v4, 0xff
+                    invoke-static {{v4}}, Ljava/lang/Integer;->toHexString(I)Ljava/lang/String;
+                    move-result-object v4
 
-        invoke-virtual {{v4}}, Ljava/lang/String;->length()I
-        move-result v5
-        const/4 v6, 0x1
+                    invoke-virtual {{v4}}, Ljava/lang/String;->length()I
+                    move-result v5
+                    const/4 v6, 0x1
 
-        if-ne v5, v6, :cond_no_pad
+                    if-ne v5, v6, :cond_no_pad
 
-        const-string v5, "0"
-        invoke-virtual {{v1, v5}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+                    const-string v5, "0"
+                    invoke-virtual {{v1, v5}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
 
-    :cond_no_pad
-        invoke-virtual {{v1, v4}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+                :cond_no_pad
+                    invoke-virtual {{v1, v4}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
 
-        add-int/lit8 v3, v3, 0x1
-        goto :goto_0
+                    add-int/lit8 v3, v3, 0x1
+                    goto :goto_0
 
-    :cond_sha256_done
-        invoke-virtual {{v1}}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
-        move-result-object v0
-        goto :cond_fingerprint_done
+                :cond_sha256_done
+                    invoke-virtual {{v1}}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
+                    move-result-object v0
+                    goto :cond_fingerprint_done
 
-    :catch_sha256
-        move-exception v1
+                :catch_sha256
+                    move-exception v1
 
-        const/4 v1, 0x0
-        const/4 v2, 0x0
+                    const/4 v1, 0x0
+                    const/4 v2, 0x0
 
-    :goto_1
-        invoke-virtual {{v0}}, Ljava/lang/String;->length()I
-        move-result v3
-        if-ge v1, v3, :cond_fallback_done
+                :goto_1
+                    invoke-virtual {{v0}}, Ljava/lang/String;->length()I
+                    move-result v3
+                    if-ge v1, v3, :cond_fallback_done
 
-        invoke-virtual {{v0, v1}}, Ljava/lang/String;->charAt(I)C
-        move-result v3
+                    invoke-virtual {{v0, v1}}, Ljava/lang/String;->charAt(I)C
+                    move-result v3
 
-        shl-int/lit8 v4, v2, 0x5
-        sub-int/2addr v4, v2
-        add-int v2, v4, v3
-        or-int/lit8 v2, v2, 0x0
+                    shl-int/lit8 v4, v2, 0x5
+                    sub-int/2addr v4, v2
+                    add-int v2, v4, v3
+                    or-int/lit8 v2, v2, 0x0
 
-        add-int/lit8 v1, v1, 0x1
-        goto :goto_1
+                    add-int/lit8 v1, v1, 0x1
+                    goto :goto_1
 
-    :cond_fallback_done
-        new-instance v0, Ljava/lang/StringBuilder;
-        const-string v1, "fp_"
-        invoke-direct {{v0, v1}}, Ljava/lang/StringBuilder;-><init>(Ljava/lang/String;)V
-        invoke-static {{v2}}, Ljava/lang/Math;->abs(I)I
-        move-result v1
-        invoke-virtual {{v0, v1}}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
-        invoke-virtual {{v0}}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
-        move-result-object v0
+                :cond_fallback_done
+                    new-instance v0, Ljava/lang/StringBuilder;
+                    const-string v1, "fp_"
+                    invoke-direct {{v0, v1}}, Ljava/lang/StringBuilder;-><init>(Ljava/lang/String;)V
+                    invoke-static {{v2}}, Ljava/lang/Math;->abs(I)I
+                    move-result v1
+                    invoke-virtual {{v0, v1}}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
+                    invoke-virtual {{v0}}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
+                    move-result-object v0
 
-    :cond_fingerprint_done
-        new-instance v1, Lorg/json/JSONObject;
-        invoke-direct {{v1}}, Lorg/json/JSONObject;-><init>()V
+                :cond_fingerprint_done
+                    new-instance v1, Lorg/json/JSONObject;
+                    invoke-direct {{v1}}, Lorg/json/JSONObject;-><init>()V
 
-        const-string v2, "key"
-        sget-object v3, L{package_path}/LaunchReporter;->APK_KEY:Ljava/lang/String;
-        invoke-virtual {{v1, v2, v3}}, Lorg/json/JSONObject;->put(Ljava/lang/String;Ljava/lang/Object;)Lorg/json/JSONObject;
+                    const-string v2, "key"
+                    sget-object v3, L{package_path}/LaunchReporter;->APK_KEY:Ljava/lang/String;
+                    invoke-virtual {{v1, v2, v3}}, Lorg/json/JSONObject;->put(Ljava/lang/String;Ljava/lang/Object;)Lorg/json/JSONObject;
 
-        const-string v2, "fingerprint"
-        invoke-virtual {{v1, v2, v0}}, Lorg/json/JSONObject;->put(Ljava/lang/String;Ljava/lang/Object;)Lorg/json/JSONObject;
+                    const-string v2, "fingerprint"
+                    invoke-virtual {{v1, v2, v0}}, Lorg/json/JSONObject;->put(Ljava/lang/String;Ljava/lang/Object;)Lorg/json/JSONObject;
 
-        const-string v2, "event"
-        const-string v3, "app_launch"
-        invoke-virtual {{v1, v2, v3}}, Lorg/json/JSONObject;->put(Ljava/lang/String;Ljava/lang/Object;)Lorg/json/JSONObject;
+                    const-string v2, "event"
+                    const-string v3, "app_launch"
+                    invoke-virtual {{v1, v2, v3}}, Lorg/json/JSONObject;->put(Ljava/lang/String;Ljava/lang/Object;)Lorg/json/JSONObject;
 
-        new-instance v0, Ljava/net/URL;
-        sget-object v2, L{package_path}/LaunchReporter;->REPORT_URL:Ljava/lang/String;
-        invoke-direct {{v0, v2}}, Ljava/net/URL;-><init>(Ljava/lang/String;)V
+                    new-instance v0, Ljava/net/URL;
+                    sget-object v2, L{package_path}/LaunchReporter;->REPORT_URL:Ljava/lang/String;
+                    invoke-direct {{v0, v2}}, Ljava/net/URL;-><init>(Ljava/lang/String;)V
 
-        invoke-virtual {{v0}}, Ljava/net/URL;->openConnection()Ljava/net/URLConnection;
-        move-result-object v0
-        check-cast v0, Ljava/net/HttpURLConnection;
+                    invoke-virtual {{v0}}, Ljava/net/URL;->openConnection()Ljava/net/URLConnection;
+                    move-result-object v0
+                    check-cast v0, Ljava/net/HttpURLConnection;
 
-        const/4 v2, 0x1
-        invoke-virtual {{v0, v2}}, Ljava/net/HttpURLConnection;->setDoOutput(Z)V
+                    const/4 v2, 0x1
+                    invoke-virtual {{v0, v2}}, Ljava/net/HttpURLConnection;->setDoOutput(Z)V
 
-        const-string v2, "POST"
-        invoke-virtual {{v0, v2}}, Ljava/net/HttpURLConnection;->setRequestMethod(Ljava/lang/String;)V
+                    const-string v2, "POST"
+                    invoke-virtual {{v0, v2}}, Ljava/net/HttpURLConnection;->setRequestMethod(Ljava/lang/String;)V
 
-        const-string v2, "Content-Type"
-        const-string v3, "application/json; charset=utf-8"
-        invoke-virtual {{v0, v2, v3}}, Ljava/net/HttpURLConnection;->setRequestProperty(Ljava/lang/String;Ljava/lang/String;)V
+                    const-string v2, "Content-Type"
+                    const-string v3, "application/json; charset=utf-8"
+                    invoke-virtual {{v0, v2, v3}}, Ljava/net/HttpURLConnection;->setRequestProperty(Ljava/lang/String;Ljava/lang/String;)V
 
-        invoke-virtual {{v1}}, Lorg/json/JSONObject;->toString()Ljava/lang/String;
-        move-result-object v1
+                    invoke-virtual {{v1}}, Lorg/json/JSONObject;->toString()Ljava/lang/String;
+                    move-result-object v1
 
-        const-string v2, "UTF-8"
-        invoke-virtual {{v1, v2}}, Ljava/lang/String;->getBytes(Ljava/lang/String;)[B
-        move-result-object v1
+                    const-string v2, "UTF-8"
+                    invoke-virtual {{v1, v2}}, Ljava/lang/String;->getBytes(Ljava/lang/String;)[B
+                    move-result-object v1
 
-        invoke-virtual {{v0}}, Ljava/net/HttpURLConnection;->getOutputStream()Ljava/io/OutputStream;
-        move-result-object v2
-        invoke-virtual {{v2, v1}}, Ljava/io/OutputStream;->write([B)V
-        invoke-virtual {{v2}}, Ljava/io/OutputStream;->flush()V
-        invoke-virtual {{v2}}, Ljava/io/OutputStream;->close()V
+                    invoke-virtual {{v0}}, Ljava/net/HttpURLConnection;->getOutputStream()Ljava/io/OutputStream;
+                    move-result-object v2
+                    invoke-virtual {{v2, v1}}, Ljava/io/OutputStream;->write([B)V
+                    invoke-virtual {{v2}}, Ljava/io/OutputStream;->flush()V
+                    invoke-virtual {{v2}}, Ljava/io/OutputStream;->close()V
 
-        invoke-virtual {{v0}}, Ljava/net/HttpURLConnection;->getResponseCode()I
-        move-result v1
+                    invoke-virtual {{v0}}, Ljava/net/HttpURLConnection;->getResponseCode()I
+                    move-result v1
 
-        invoke-virtual {{v0}}, Ljava/net/HttpURLConnection;->disconnect()V
+                    invoke-virtual {{v0}}, Ljava/net/HttpURLConnection;->disconnect()V
 
-    :try_end
-    .catch Ljava/lang/Exception; {{:try_start .. :try_end}} :catch_block
+                :try_end
+                .catch Ljava/lang/Exception; {{:try_start .. :try_end}} :catch_block
 
-    return-void
+                return-void
 
-    :catch_block
-    move-exception v0
-    return-void
-.end method
-""".rstrip() + "\n"
+                :catch_block
+                move-exception v0
+                return-void
+            .end method
+            """.rstrip() + "\n"
 
         (cls_dir / "LaunchReporter.smali").write_text(main_content, encoding="utf-8")
         (cls_dir / "LaunchReporter$1.smali").write_text(inner_content, encoding="utf-8")
@@ -586,7 +627,8 @@ class APKProcessor:
             intent_filters = activity.findall(".//intent-filter")
             is_launcher = any(
                 filt.find("action[@android:name='android.intent.action.MAIN']", ns) is not None and
-                filt.find("category[@android:name='android.intent.category.LAUNCHER']", ns) is not None
+                filt.find(
+                    "category[@android:name='android.intent.category.LAUNCHER']", ns) is not None
                 for filt in intent_filters
             )
             if not is_launcher:
@@ -608,7 +650,8 @@ class APKProcessor:
                 continue
 
             try:
-                content = smali_path.read_text(encoding="utf-8", errors="ignore")
+                content = smali_path.read_text(
+                    encoding="utf-8", errors="ignore")
                 lines = content.splitlines()
                 new_lines = []
                 in_oncreate = False
@@ -623,12 +666,14 @@ class APKProcessor:
                         continue
 
                     if in_oncreate and (".locals" in stripped or ".prologue" in stripped) and not inserted:
-                        new_lines.append(f"    invoke-static {{p0}}, {reporter}->sendLaunch(Landroid/content/Context;)V")
+                        new_lines.append(
+                            f"    invoke-static {{p0}}, {reporter}->sendLaunch(Landroid/content/Context;)V")
                         inserted = True
                         in_oncreate = False
 
                 if inserted:
-                    smali_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+                    smali_path.write_text(
+                        "\n".join(new_lines) + "\n", encoding="utf-8")
             except Exception:
                 pass
 
@@ -651,7 +696,8 @@ class APKProcessor:
 
     def _add_random_dummy_image(self, src_dir: Path):
         res_dir = src_dir / "res"
-        densities = ["drawable-mdpi", "drawable-hdpi", "drawable-xhdpi", "drawable-xxhdpi", "drawable-xxxhdpi"]
+        densities = ["drawable-mdpi", "drawable-hdpi",
+                     "drawable-xhdpi", "drawable-xxhdpi", "drawable-xxxhdpi"]
         chosen_density = random.choice(densities)
         folder = res_dir / chosen_density
         folder.mkdir(parents=True, exist_ok=True)
@@ -674,7 +720,8 @@ class APKProcessor:
             raise Exception(f"zipalign failed: {result.stderr}")
 
     def _sign_apk(self, aligned_apk: Path, signed_apk: Path, keystore: Path):
-        base_cmd = ["java", "-jar", os.getenv("APK_S", "apksigner")] if os.getenv('SERVER_TYPE') == "LOCAL" else [os.getenv("APK_S", "apksigner")]
+        base_cmd = ["java", "-jar", os.getenv("APK_S", "apksigner")] if os.getenv(
+            'SERVER_TYPE') == "LOCAL" else [os.getenv("APK_S", "apksigner")]
         cmd = base_cmd + [
             "sign", "--ks", str(keystore),
             "--ks-key-alias", "androiddebugkey",
@@ -704,7 +751,8 @@ class APKProcessor:
         unsigned_apk = job_folder / "unsigned.apk"
         aligned_apk = job_folder / "aligned.apk"
 
-        public_output_dir = Path(os.getenv("HARDENED_APK_OUTPUT_DIR", self.download_dir))
+        public_output_dir = Path(
+            os.getenv("HARDENED_APK_OUTPUT_DIR", self.download_dir))
         final_apk_dir = public_output_dir / f"uploads/{job.domain}/app/apk"
         final_apk_dir.mkdir(parents=True, exist_ok=True)
         final_apk_path = final_apk_dir / f"{job.file_name}.apk"
@@ -722,39 +770,67 @@ class APKProcessor:
             "new_version_code": None,
             "old_version_name": None,
             "new_version_name": None,
+            "timings": {}
         }
 
-        try:
-            self._download_apk(job.apk_url, temp_file)
+        job_start = time.perf_counter()
 
-            decompile_log = self.apktool.decompile(str(temp_file), str(src_dir))
+        try:
+            # --- Download APK ---
+            start = time.perf_counter()
+            self._download_apk(job.apk_url, temp_file)
+            result["timings"]["download_apk"] = time.perf_counter() - start
+
+            # --- Decompile ---
+            start = time.perf_counter()
+            decompile_log = self.apktool.decompile(
+                str(temp_file), str(src_dir))
+            result["timings"]["decompile"] = time.perf_counter() - start
             if "ERROR" in decompile_log or "Exception" in decompile_log:
                 raise Exception(decompile_log)
 
+            # --- Read apktool.yml ---
+            start = time.perf_counter()
             yml_path = src_dir / "apktool.yml"
             with open(yml_path, 'r', encoding='utf-8') as f:
                 apktool_data = yaml.safe_load(f)
+            result["timings"]["read_apktool_yml"] = time.perf_counter() - start
 
             version_info = apktool_data.get('versionInfo', {})
             orig_vcode = int(version_info.get('versionCode', 1))
             orig_vname = str(version_info.get('versionName', '1.0')).strip()
+            current_package = apktool_data.get(
+                'renameManifestPackage') or apktool_data.get('package', 'unknown.package')
 
-            current_package = apktool_data.get('renameManifestPackage') or apktool_data.get('package', 'unknown.package')
-
+            # --- Load manifest ---
+            start = time.perf_counter()
             manifest_path = src_dir / "AndroidManifest.xml"
             tree = ET.parse(manifest_path)
             root = tree.getroot()
-            ET.register_namespace('android', 'http://schemas.android.com/apk/res/android')
+            ET.register_namespace(
+                'android', 'http://schemas.android.com/apk/res/android')
+            result["timings"]["load_manifest"] = time.perf_counter() - start
 
+            # --- Cleanup permissions ---
+            start = time.perf_counter()
             self._cleanup_manifest_permissions(root)
+            result["timings"]["cleanup_permissions"] = time.perf_counter() - \
+                start
 
+            # --- Inject app key ---
             if job.app_key and str(job.app_key).strip():
+                start = time.perf_counter()
                 ANDROID_NS = "{http://schemas.android.com/apk/res/android}"
                 for meta in root.findall(".//application/meta-data"):
                     if meta.get(f"{ANDROID_NS}name") == "com.openinstall.APP_KEY":
-                        meta.set(f"{ANDROID_NS}value", str(job.app_key).strip())
+                        meta.set(f"{ANDROID_NS}value",
+                                 str(job.app_key).strip())
                         break
+                result["timings"]["inject_app_key"] = time.perf_counter() - \
+                    start
 
+            # --- Rename package ---
+            start = time.perf_counter()
             target_package = current_package
             if job.package_name_method == "random":
                 target_package = self._generate_random_package()
@@ -763,48 +839,86 @@ class APKProcessor:
 
             if target_package != current_package:
                 root.set("package", target_package)
-                tree.write(manifest_path, encoding="utf-8", xml_declaration=True)
+                tree.write(manifest_path, encoding="utf-8",
+                           xml_declaration=True)
                 self._rename_package(src_dir, current_package, target_package)
+            result["timings"]["rename_package"] = time.perf_counter() - start
 
-            old_display_name, new_display_name = self._update_app_display_name(job, root, src_dir)
+            # --- Update display name ---
+            start = time.perf_counter()
+            old_display_name, new_display_name = self._update_app_display_name(
+                job, root, src_dir)
+            result["timings"]["update_display_name"] = time.perf_counter() - \
+                start
 
+            # --- Harden manifest ---
+            start = time.perf_counter()
             new_vcode, new_vname, old_vcode, old_vname = self._harden_manifest(
                 job, root, tree, manifest_path, orig_vcode, orig_vname)
+            result["timings"]["harden_manifest"] = time.perf_counter() - start
 
+            # --- Inject protection stub ---
+            start = time.perf_counter()
             self._inject_protection_stub(src_dir, target_package)
+            result["timings"]["inject_protection_stub"] = time.perf_counter() - \
+                start
 
+            # --- Optional launch hooks ---
             if job.op_call_back and job.op_call_back.strip() and job.apk_key and job.apk_key.strip():
+                start = time.perf_counter()
                 self._inject_launch_reporter(src_dir, target_package, job)
                 self._hook_launcher_activities(src_dir, target_package)
+                result["timings"]["launcher_hooks"] = time.perf_counter() - \
+                    start
 
+            # --- Add dummy files ---
+            start = time.perf_counter()
             self._add_random_text_file(src_dir)
             self._add_random_dummy_image(src_dir)
+            result["timings"]["dummy_files"] = time.perf_counter() - start
 
+            # --- Extract icon ---
+            start = time.perf_counter()
             icon_url = self._extract_and_copy_icon(job, src_dir)
+            result["timings"]["extract_icon"] = time.perf_counter() - start
 
+            # --- Recompile ---
+            start = time.perf_counter()
             recompile_log = self.apktool.recompile(str(src_dir), str(rebuilt_apk))
+            result["timings"]["recompile"] = time.perf_counter() - start
             if not rebuilt_apk.exists():
                 raise Exception(recompile_log or "Recompile failed")
 
+            # --- Keystore ---
+            start = time.perf_counter()
             keystore = self._keystore_for_package(job)
+            result["timings"]["load_keystore"] = time.perf_counter() - start
 
+            # --- Zipalign ---
+            start = time.perf_counter()
             self._zipalign_apk(rebuilt_apk, aligned_apk)
+            result["timings"]["zipalign"] = time.perf_counter() - start
+
+            # --- Sign APK ---
+            start = time.perf_counter()
             self._sign_apk(aligned_apk, final_apk_path, keystore)
+            result["timings"]["sign_apk"] = time.perf_counter() - start
 
-            # FTP upload if credentials provided
+            # --- FTP upload ---
             if hasattr(job, 'host_name') and job.host_name:
-                host_name = job.host_name
-                user_name = getattr(job, 'user_name', 'anonymous')
-                password = getattr(job, 'password', '')
-                ftp_dir = getattr(job, 'ftp_remote_dir', '/')
-                self._upload_to_ftp(final_apk_path, host_name, user_name, password, ftp_dir)
+                start = time.perf_counter()
+                self._upload_to_ftp(final_apk_path, job.host_name,  getattr(job, 'user_name', 'anonymous'),getattr(job, 'password', ''),getattr(job, 'ftp_remote_dir', '/'))
+                result["timings"]["ftp_upload"] = time.perf_counter() - start
 
+            # --- Update timestamp ---
+            start = time.perf_counter()
             now = time.time() + random.randint(-1800, 1800)
             os.utime(final_apk_path, (now, now))
+            result["timings"]["update_timestamp"] = time.perf_counter() - start
 
+            # --- Final result ---
             public_download_url = f"{os.getenv('PUBLIC_DOMAIN', self.base_url).rstrip('/')}/hardened/{job.job_id}.apk"
             keystore_url = f"{self.base_url}/hardened/{job.id}.keystore"
-            
             result.update({
                 "status": "success",
                 "download_url": public_download_url,
@@ -814,7 +928,6 @@ class APKProcessor:
                 "old_display_name": old_display_name,
                 "new_display_name": new_display_name,
                 "message": "APK hardened successfully",
-                "hardening_summary": "Package renamed (if requested), display name updated (if requested), icon copied, random text file + dummy PNG added, versionName padded + randomized suffix, versionCode appended current_version, timestamp refreshed, .idsig removed",
                 "original_package": current_package,
                 "new_package": target_package,
                 "new_version_code": new_vcode,
@@ -822,13 +935,12 @@ class APKProcessor:
                 "new_version_name": new_vname,
                 "old_version_name": orig_vname,
                 "icon_name": f"{job.file_name}",
-                "id": job.id,
                 "keystore_url": keystore_url,
+                "total_job_time": time.perf_counter() - job_start
             })
 
         except Exception as e:
             result["error"] = str(e)
-
         finally:
             def cleanup_and_notify():
                 try:
@@ -846,6 +958,10 @@ class APKProcessor:
                             pass
 
             Thread(target=cleanup_and_notify, daemon=True).start()
+
+        print(
+            f"[TIMER] TOTAL JOB TIME: {result.get('total_job_time', 0):.3f}s")
+        return result
 
     def start_background_hardening(self, job: Job) -> str:
         self.executor.submit(self.harden_and_notify, job)
